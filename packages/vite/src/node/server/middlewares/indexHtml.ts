@@ -11,6 +11,7 @@ import {
   assetAttrsConfig,
   getAttrKey,
   getScriptInfo,
+  htmlEnvHook,
   nodeIsElement,
   overwriteAttrValue,
   postImportMapHook,
@@ -51,6 +52,7 @@ export function createDevHtmlTransformFn(
       [
         preImportMapHook(server.config),
         ...preHooks,
+        htmlEnvHook(server.config),
         devHtmlHook,
         ...normalHooks,
         ...postHooks,
@@ -100,7 +102,7 @@ const processNodeUrl = (
     const fullUrl = path.posix.join(devBase, url)
     overwriteAttrValue(s, sourceCodeLocation, fullUrl)
   } else if (
-    url.startsWith('.') &&
+    url[0] === '.' &&
     originalUrl &&
     originalUrl !== '/' &&
     htmlPath === '/index.html'
@@ -164,7 +166,7 @@ const devHtmlHook: IndexHtmlTransformHook = async (
     const code = contentNode.value
 
     let map: SourceMapInput | undefined
-    if (!proxyModulePath.startsWith('\0')) {
+    if (proxyModulePath[0] !== '\0') {
       map = new MagicString(html)
         .snip(
           contentNode.sourceCodeLocation!.startOffset,

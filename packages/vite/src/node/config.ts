@@ -219,7 +219,7 @@ export interface UserConfig {
   legacy?: LegacyOptions
   /**
    * Log level.
-   * Default: 'info'
+   * @default 'info'
    */
   logLevel?: LogLevel
   /**
@@ -227,12 +227,12 @@ export interface UserConfig {
    */
   customLogger?: Logger
   /**
-   * Default: true
+   * @default true
    */
   clearScreen?: boolean
   /**
    * Environment files directory. Can be an absolute path, or a path relative from
-   * the location of the config file itself.
+   * root.
    * @default root
    */
   envDir?: string
@@ -292,6 +292,14 @@ export interface ExperimentalOptions {
    * @default false
    */
   hmrPartialAccept?: boolean
+  /**
+   * Skips SSR transform to make it easier to use Vite with Node ESM loaders.
+   * @warning Enabling this will break normal operation of Vite's SSR in development mode.
+   *
+   * @experimental
+   * @default false
+   */
+  skipSsrTransform?: boolean
 }
 
 export interface LegacyOptions {
@@ -334,11 +342,13 @@ export type ResolvedConfig = Readonly<
     /** @internal */
     mainConfig: ResolvedConfig | null
     isProduction: boolean
+    envDir: string
     env: Record<string, any>
     resolve: Required<ResolveOptions> & {
       alias: Alias[]
     }
     plugins: readonly Plugin[]
+    esbuild: ESBuildOptions | false
     server: ResolvedServerOptions
     build: ResolvedBuildOptions
     preview: ResolvedPreviewOptions
@@ -521,7 +531,11 @@ export async function resolveConfig(
       : './'
     : resolveBaseUrl(config.base, isBuild, logger) ?? '/'
 
-  const resolvedBuildOptions = resolveBuildOptions(config.build, logger)
+  const resolvedBuildOptions = resolveBuildOptions(
+    config.build,
+    logger,
+    resolvedRoot,
+  )
 
   // resolve cache directory
   const pkgPath = lookupFile(resolvedRoot, [`package.json`], { pathOnly: true })
@@ -644,9 +658,17 @@ export async function resolveConfig(
     mainConfig: null,
     isProduction,
     plugins: userPlugins,
+    esbuild:
+      config.esbuild === false
+        ? false
+        : {
+            jsxDev: !isProduction,
+            ...config.esbuild,
+          },
     server,
     build: resolvedBuildOptions,
     preview: resolvePreviewOptions(config.preview, server),
+    envDir,
     env: {
       ...userEnv,
       BASE_URL,
@@ -806,7 +828,7 @@ export function resolveBaseUrl(
   isBuild: boolean,
   logger: Logger,
 ): string {
-  if (base.startsWith('.')) {
+  if (base[0] === '.') {
     logger.warn(
       colors.yellow(
         colors.bold(
@@ -821,7 +843,7 @@ export function resolveBaseUrl(
   // external URL flag
   const isExternal = isExternalUrl(base)
   // no leading slash warn
-  if (!isExternal && !base.startsWith('/')) {
+  if (!isExternal && base[0] !== '/') {
     logger.warn(
       colors.yellow(
         colors.bold(`(!) "base" option should start with a slash.`),
@@ -833,7 +855,7 @@ export function resolveBaseUrl(
   if (!isBuild || !isExternal) {
     base = new URL(base, 'http://vitejs.dev').pathname
     // ensure leading slash
-    if (!base.startsWith('/')) {
+    if (base[0] !== '/') {
       base = '/' + base
     }
   }
@@ -1058,7 +1080,9 @@ async function loadConfigFromBundledFile(
   // with --experimental-loader themselves, we have to do a hack here:
   // write it to disk, load it with native Node ESM, then delete the file.
   if (isESM) {
-    const fileBase = `${fileName}.timestamp-${Date.now()}`
+    const fileBase = `${fileName}.timestamp-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)})}`
     const fileNameTmp = `${fileBase}.mjs`
     const fileUrl = `${pathToFileURL(fileBase)}.mjs`
     fs.writeFileSync(fileNameTmp, bundledCode)

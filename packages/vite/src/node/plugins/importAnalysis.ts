@@ -78,6 +78,13 @@ export const canSkipImportAnalysis = (id: string): boolean =>
 const optimizedDepChunkRE = /\/chunk-[A-Z\d]{8}\.js/
 const optimizedDepDynamicRE = /-[A-Z\d]{8}\.js/
 
+const hasImportInQueryParamsRE = /[?&]import=?\b/
+
+const hasViteIgnoreRE = /\/\*\s*@vite-ignore\s*\*\//
+
+const cleanUpRawUrlRE = /\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm
+const urlIsStringRE = /^(?:'.*'|".*"|`.*`)$/
+
 export function isExplicitImportRequired(url: string): boolean {
   return !isJSRequest(cleanUrl(url)) && !isCSSRequest(url)
 }
@@ -166,6 +173,26 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
   const enablePartialAccept = config.experimental?.hmrPartialAccept
   let server: ViteDevServer
 
+  let _env: string | undefined
+  function getEnv(ssr: boolean) {
+    if (!_env) {
+      _env = `import.meta.env = ${JSON.stringify({
+        ...config.env,
+        SSR: '__vite__ssr__',
+      })};`
+      // account for user env defines
+      for (const key in config.define) {
+        if (key.startsWith(`import.meta.env.`)) {
+          const val = config.define[key]
+          _env += `${key} = ${
+            typeof val === 'string' ? val : JSON.stringify(val)
+          };`
+        }
+      }
+    }
+    return _env.replace('"__vite__ssr__"', ssr + '')
+  }
+
   return {
     name: 'vite:import-analysis',
 
@@ -197,12 +224,15 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         ;[imports, exports] = parseImports(source)
       } catch (e: any) {
         const isVue = importer.endsWith('.vue')
+        const isJsx = importer.endsWith('.jsx') || importer.endsWith('.tsx')
         const maybeJSX = !isVue && isJSRequest(importer)
 
         const msg = isVue
           ? `Install @vitejs/plugin-vue to handle .vue files.`
           : maybeJSX
-          ? `If you are using JSX, make sure to name the file with the .jsx or .tsx extension.`
+          ? isJsx
+            ? `If you use tsconfig.json, make sure to not set jsx to preserve.`
+            : `If you are using JSX, make sure to name the file with the .jsx or .tsx extension.`
           : `You may need to install appropriate plugins to handle the ${path.extname(
               importer,
             )} file format, or if it's an asset, add "**/*${path.extname(
@@ -308,7 +338,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
           )
         }
 
-        const isRelative = url.startsWith('.')
+        const isRelative = url[0] === '.'
         const isSelfImport = !isRelative && cleanUrl(url) === cleanUrl(importer)
 
         // normalize all imports into resolved URLs
@@ -334,7 +364,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         // if the resolved id is not a valid browser import specifier,
         // prefix it to make it valid. We will strip this before feeding it
         // back into the transform pipeline
-        if (!url.startsWith('.') && !url.startsWith('/')) {
+        if (url[0] !== '.' && url[0] !== '/') {
           url = wrapId(resolved.id)
         }
 
@@ -350,7 +380,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
           // query can break 3rd party plugin's extension checks.
           if (
             (isRelative || isSelfImport) &&
-            !/[?&]import=?\b/.test(url) &&
+            !hasImportInQueryParamsRE.test(url) &&
             !url.match(DEP_VERSION_RE)
           ) {
             const versionMatch = importer.match(DEP_VERSION_RE)
@@ -406,19 +436,20 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
           const prop = source.slice(end, end + 4)
           if (prop === '.hot') {
             hasHMR = true
-            if (source.slice(end + 4, end + 11) === '.accept') {
+            const endHot = end + 4 + (source[end + 4] === '?' ? 1 : 0)
+            if (source.slice(endHot, endHot + 7) === '.accept') {
               // further analyze accepted modules
-              if (source.slice(end + 4, end + 18) === '.acceptExports') {
+              if (source.slice(endHot, endHot + 14) === '.acceptExports') {
                 lexAcceptedHmrExports(
                   source,
-                  source.indexOf('(', end + 18) + 1,
+                  source.indexOf('(', endHot + 14) + 1,
                   acceptedExports,
                 )
                 isPartiallySelfAccepting = true
               } else if (
                 lexAcceptedHmrDeps(
                   source,
-                  source.indexOf('(', end + 11) + 1,
+                  source.indexOf('(', endHot + 7) + 1,
                   acceptedUrls,
                 )
               ) {
@@ -465,7 +496,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
 
           // warn imports to non-asset /public files
           if (
-            specifier.startsWith('/') &&
+            specifier[0] === '/' &&
             !config.assetsInclude(cleanUrl(specifier)) &&
             !specifier.endsWith('.json') &&
             checkPublicFile(specifier, config)
@@ -589,7 +620,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         } else if (!importer.startsWith(clientDir)) {
           if (!importer.includes('node_modules')) {
             // check @vite-ignore which suppresses dynamic import warning
-            const hasViteIgnore = /\/\*\s*@vite-ignore\s*\*\//.test(
+            const hasViteIgnore = hasViteIgnoreRE.test(
               // complete expression inside parens
               source.slice(dynamicIndex + 1, end),
             )
@@ -613,11 +644,9 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
           }
 
           if (!ssr) {
-            const url = rawUrl
-              .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, '')
-              .trim()
+            const url = rawUrl.replace(cleanUpRawUrlRE, '').trim()
             if (
-              !/^(?:'.*'|".*"|`.*`)$/.test(url) ||
+              !urlIsStringRE.test(url) ||
               isExplicitImportRequired(url.slice(1, -1))
             ) {
               needQueryInjectHelper = true
@@ -634,20 +663,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
 
       if (hasEnv) {
         // inject import.meta.env
-        let env = `import.meta.env = ${JSON.stringify({
-          ...config.env,
-          SSR: !!ssr,
-        })};`
-        // account for user env defines
-        for (const key in config.define) {
-          if (key.startsWith(`import.meta.env.`)) {
-            const val = config.define[key]
-            env += `${key} = ${
-              typeof val === 'string' ? val : JSON.stringify(val)
-            };`
-          }
-        }
-        str().prepend(env)
+        str().prepend(getEnv(ssr))
       }
 
       if (hasHMR && !ssr) {
