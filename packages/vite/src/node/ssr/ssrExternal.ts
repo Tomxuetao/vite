@@ -9,6 +9,7 @@ import {
   createFilter,
   isBuiltin,
   isDefined,
+  isInNodeModules,
   lookupFile,
   normalizePath,
 } from '../utils'
@@ -145,7 +146,7 @@ export function createIsConfiguredAsSsrExternal(
         !!configuredAsExternal,
       )?.external
     } catch (e) {
-      debug(
+      debug?.(
         `Failed to node resolve "${id}". Skipping externalizing it by default.`,
       )
       // may be an invalid import that's resolved by a plugin
@@ -216,7 +217,11 @@ function cjsSsrCollectExternals(
   seen: Set<string>,
   logger: Logger,
 ) {
-  const rootPkgContent = lookupFile(root, ['package.json'])
+  const rootPkgPath = lookupFile(root, ['package.json'])
+  if (!rootPkgPath) {
+    return
+  }
+  const rootPkgContent = fs.readFileSync(rootPkgPath, 'utf-8')
   if (!rootPkgContent) {
     return
   }
@@ -259,7 +264,7 @@ function cjsSsrCollectExternals(
       // no main entry, but deep imports may be allowed
       const pkgDir = resolvePackageData(id, root)?.dir
       if (pkgDir) {
-        if (pkgDir.includes('node_modules')) {
+        if (isInNodeModules(pkgDir)) {
           ssrExternals.add(id)
         } else {
           depsToTrace.add(path.dirname(pkgDir))
@@ -268,7 +273,7 @@ function cjsSsrCollectExternals(
       }
 
       // resolve failed, assume include
-      debug(`Failed to resolve entries for package "${id}"\n`, e)
+      debug?.(`Failed to resolve entries for package "${id}"\n`, e)
       continue
     }
     // no esm entry but has require entry
@@ -276,7 +281,7 @@ function cjsSsrCollectExternals(
       ssrExternals.add(id)
     }
     // trace the dependencies of linked packages
-    else if (!esmEntry.includes('node_modules')) {
+    else if (!isInNodeModules(esmEntry)) {
       const pkgDir = resolvePackageData(id, root)?.dir
       if (pkgDir) {
         depsToTrace.add(pkgDir)
