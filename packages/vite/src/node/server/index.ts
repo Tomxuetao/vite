@@ -328,7 +328,7 @@ export interface ResolvedServerUrls {
   network: string[]
 }
 
-export async function createServer(
+export function createServer(
   inlineConfig: InlineConfig = {},
 ): Promise<ViteDevServer> {
   return _createServer(inlineConfig, { ws: true })
@@ -435,7 +435,8 @@ export async function _createServer(
     },
     openBrowser() {
       const options = server.config.server
-      const url = server.resolvedUrls?.local[0]
+      const url =
+        server.resolvedUrls?.local[0] ?? server.resolvedUrls?.network[0]
       if (url) {
         const path =
           typeof options.open === 'string'

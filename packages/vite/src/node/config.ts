@@ -21,7 +21,11 @@ import type { ResolvedServerOptions, ServerOptions } from './server'
 import { resolveServerOptions } from './server'
 import type { PreviewOptions, ResolvedPreviewOptions } from './preview'
 import { resolvePreviewOptions } from './preview'
-import type { CSSOptions } from './plugins/css'
+import {
+  type CSSOptions,
+  type ResolvedCSSOptions,
+  resolveCSSOptions,
+} from './plugins/css'
 import {
   asyncFlatten,
   createDebugger,
@@ -326,7 +330,10 @@ export interface InlineConfig extends UserConfig {
 }
 
 export type ResolvedConfig = Readonly<
-  Omit<UserConfig, 'plugins' | 'assetsInclude' | 'optimizeDeps' | 'worker'> & {
+  Omit<
+    UserConfig,
+    'plugins' | 'css' | 'assetsInclude' | 'optimizeDeps' | 'worker'
+  > & {
     configFile: string | undefined
     configFileDependencies: string[]
     inlineConfig: InlineConfig
@@ -349,6 +356,7 @@ export type ResolvedConfig = Readonly<
       alias: Alias[]
     }
     plugins: readonly Plugin[]
+    css: ResolvedCSSOptions | undefined
     esbuild: ESBuildOptions | false
     server: ResolvedServerOptions
     build: ResolvedBuildOptions
@@ -672,6 +680,7 @@ export async function resolveConfig(
     mainConfig: null,
     isProduction,
     plugins: userPlugins,
+    css: resolveCSSOptions(config.css),
     esbuild:
       config.esbuild === false
         ? false
@@ -1141,23 +1150,18 @@ async function loadConfigFromBundledFile(
 ): Promise<UserConfigExport> {
   // for esm, before we can register loaders without requiring users to run node
   // with --experimental-loader themselves, we have to do a hack here:
-  // convert to base64, load it with native Node ESM.
+  // write it to disk, load it with native Node ESM, then delete the file.
   if (isESM) {
+    const fileBase = `${fileName}.timestamp-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`
+    const fileNameTmp = `${fileBase}.mjs`
+    const fileUrl = `${pathToFileURL(fileBase)}.mjs`
+    await fsp.writeFile(fileNameTmp, bundledCode)
     try {
-      // Postfix the bundled code with a timestamp to avoid Node's ESM loader cache
-      const configTimestamp = `${fileName}.timestamp:${Date.now()}-${Math.random()
-        .toString(16)
-        .slice(2)}`
-      return (
-        await dynamicImport(
-          'data:text/javascript;base64,' +
-            Buffer.from(`${bundledCode}\n//${configTimestamp}`).toString(
-              'base64',
-            ),
-        )
-      ).default
-    } catch (e) {
-      throw new Error(`${e.message} at ${fileName}`)
+      return (await dynamicImport(fileUrl)).default
+    } finally {
+      fs.unlink(fileNameTmp, () => {}) // Ignore errors
     }
   }
   // for cjs, we can register a custom loader via `_require.extensions`
