@@ -285,7 +285,7 @@ export interface ViteDevServer {
   /**
    * @internal
    */
-  _importGlobMap: Map<string, string[][]>
+  _importGlobMap: Map<string, { affirmed: string[]; negated: string[] }[]>
   /**
    * Deps that are externalized
    * @internal
@@ -328,7 +328,7 @@ export interface ResolvedServerUrls {
   network: string[]
 }
 
-export async function createServer(
+export function createServer(
   inlineConfig: InlineConfig = {},
 ): Promise<ViteDevServer> {
   return _createServer(inlineConfig, { ws: true })
@@ -435,7 +435,8 @@ export async function _createServer(
     },
     openBrowser() {
       const options = server.config.server
-      const url = server.resolvedUrls?.local[0]
+      const url =
+        server.resolvedUrls?.local[0] ?? server.resolvedUrls?.network[0]
       if (url) {
         const path =
           typeof options.open === 'string'
@@ -463,9 +464,11 @@ export async function _createServer(
         closeHttpServer(),
       ])
       // Await pending requests. We throw early in transformRequest
-      // and in hooks if the server is closing, so the import analysis
-      // plugin stops pre-transforming static imports and this block
-      // is resolved sooner.
+      // and in hooks if the server is closing for non-ssr requests,
+      // so the import analysis plugin stops pre-transforming static
+      // imports and this block is resolved sooner.
+      // During SSR, we let pending requests finish to avoid exposing
+      // the server closed error to the users.
       while (server._pendingRequests.size > 0) {
         await Promise.allSettled(
           [...server._pendingRequests.values()].map(
@@ -851,9 +854,7 @@ async function restartServer(server: ViteDevServer) {
 
   await server.close()
 
-  // prevent new server `restart` function from calling
-  newServer._restartPromise = server._restartPromise
-
+  // Assign new server props to existing server instance
   Object.assign(server, newServer)
 
   const {
@@ -880,9 +881,6 @@ async function restartServer(server: ViteDevServer) {
     shortcutsOptions.print = false
     bindShortcuts(newServer, shortcutsOptions)
   }
-
-  // new server (the current server) can restart now
-  newServer._restartPromise = null
 }
 
 async function updateCjsSsrExternals(server: ViteDevServer) {

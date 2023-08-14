@@ -160,6 +160,7 @@ function createNodeConfig(isProduction: boolean) {
     },
     external: [
       'fsevents',
+      'lightningcss',
       ...Object.keys(pkg.dependencies),
       ...(isProduction ? [] : Object.keys(pkg.devDependencies)),
     ],
@@ -259,7 +260,7 @@ function shimDepsPlugin(deps: Record<string, ShimOptions>): Plugin {
 
           return {
             code: magicString.toString(),
-            map: magicString.generateMap({ hires: true }),
+            map: magicString.generateMap({ hires: 'boundary' }),
           }
         }
       }
@@ -307,7 +308,7 @@ const __require = require;
 
       return {
         code: s.toString(),
-        map: s.generateMap({ hires: true }),
+        map: s.generateMap({ hires: 'boundary' }),
       }
     },
   }

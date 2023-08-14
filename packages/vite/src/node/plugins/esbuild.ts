@@ -29,9 +29,9 @@ import { searchForWorkspaceRoot } from '../server/searchRoot'
 const debug = createDebugger('vite:esbuild')
 
 const INJECT_HELPERS_IIFE_RE =
-  /^(.*?)((?:const|var)\s+\S+\s*=\s*function\s*\([^)]*\)\s*\{.*?"use strict";)/s
+  /^(.*?)((?:const|var)\s+\S+\s*=\s*function\s*\([^)]*\)\s*\{\s*"use strict";)/s
 const INJECT_HELPERS_UMD_RE =
-  /^(.*?)(\(function\([^)]*\)\s*\{.+?amd.+?function\([^)]*\)\s*\{.*?"use strict";)/s
+  /^(.*?)(\(function\([^)]*\)\s*\{.+?amd.+?function\([^)]*\)\s*\{\s*"use strict";)/s
 
 const validExtensionRE = /\.\w+$/
 const jsxExtensionsRE = /\.(?:j|t)sx\b/
@@ -56,6 +56,7 @@ type TSConfigJSON = {
   extends?: string
   compilerOptions?: {
     alwaysStrict?: boolean
+    experimentalDecorators?: boolean
     importsNotUsedAsValues?: 'remove' | 'preserve' | 'error'
     jsx?: 'preserve' | 'react' | 'react-jsx' | 'react-jsxdev'
     jsxFactory?: string
@@ -64,6 +65,7 @@ type TSConfigJSON = {
     preserveValueImports?: boolean
     target?: string
     useDefineForClassFields?: boolean
+    verbatimModuleSyntax?: boolean
   }
   [key: string]: any
 }
@@ -94,6 +96,7 @@ export async function transformWithEsbuild(
   }
 
   let tsconfigRaw = options?.tsconfigRaw
+  const fallbackSupported: Record<string, boolean> = {}
 
   // if options provide tsconfigRaw in string, it takes highest precedence
   if (typeof tsconfigRaw !== 'string') {
@@ -101,6 +104,7 @@ export async function transformWithEsbuild(
     // https://esbuild.github.io/content-types/#tsconfig-json
     const meaningfulFields: Array<keyof TSCompilerOptions> = [
       'alwaysStrict',
+      'experimentalDecorators',
       'importsNotUsedAsValues',
       'jsx',
       'jsxFactory',
@@ -109,6 +113,7 @@ export async function transformWithEsbuild(
       'preserveValueImports',
       'target',
       'useDefineForClassFields',
+      'verbatimModuleSyntax',
     ]
     const compilerOptionsForFile: TSCompilerOptions = {}
     if (loader === 'ts' || loader === 'tsx') {
@@ -128,18 +133,31 @@ export async function transformWithEsbuild(
       ...tsconfigRaw?.compilerOptions,
     }
 
-    // esbuild derives `useDefineForClassFields` from `target` instead of `tsconfig.compilerOptions.target`
-    // https://github.com/evanw/esbuild/issues/2584
-    // but we want `useDefineForClassFields` to be derived from `tsconfig.compilerOptions.target`
-    if (compilerOptions.useDefineForClassFields === undefined) {
-      const lowercaseTarget = compilerOptions.target?.toLowerCase() ?? 'es3'
-      if (lowercaseTarget.startsWith('es')) {
-        const esVersion = lowercaseTarget.slice(2)
-        compilerOptions.useDefineForClassFields =
-          esVersion === 'next' || +esVersion >= 2022
-      } else {
-        compilerOptions.useDefineForClassFields = false
-      }
+    // esbuild uses `useDefineForClassFields: true` when `tsconfig.compilerOptions.target` isn't declared
+    // but we want `useDefineForClassFields: false` when `tsconfig.compilerOptions.target` isn't declared
+    // to align with the TypeScript's behavior
+    if (
+      compilerOptions.useDefineForClassFields === undefined &&
+      compilerOptions.target === undefined
+    ) {
+      compilerOptions.useDefineForClassFields = false
+    }
+
+    // esbuild v0.18 only transforms decorators when `experimentalDecorators` is set to `true`.
+    // To preserve compat with the esbuild breaking change, we set `experimentalDecorators` to
+    // `true` by default if it's unset.
+    // TODO: Remove this in Vite 5
+    if (compilerOptions.experimentalDecorators === undefined) {
+      compilerOptions.experimentalDecorators = true
+    }
+
+    // Compat with esbuild 0.17 where static properties are transpiled to
+    // static blocks when `useDefineForClassFields` is false. Its support
+    // is not great yet, so temporarily disable it for now.
+    // TODO: Remove this in Vite 5, don't pass hardcoded `esnext` target
+    // to `transformWithEsbuild` in the esbuild plugin.
+    if (compilerOptions.useDefineForClassFields !== true) {
+      fallbackSupported['class-static-blocks'] = false
     }
 
     // esbuild uses tsconfig fields when both the normal options and tsconfig was set
@@ -149,7 +167,6 @@ export async function transformWithEsbuild(
       options.jsxFactory && (compilerOptions.jsxFactory = undefined)
       options.jsxFragment && (compilerOptions.jsxFragmentFactory = undefined)
       options.jsxImportSource && (compilerOptions.jsxImportSource = undefined)
-      options.target && (compilerOptions.target = undefined)
     }
 
     tsconfigRaw = {
@@ -158,19 +175,26 @@ export async function transformWithEsbuild(
     }
   }
 
-  const resolvedOptions = {
+  const resolvedOptions: TransformOptions = {
     sourcemap: true,
     // ensure source file name contains full query
     sourcefile: filename,
     ...options,
     loader,
     tsconfigRaw,
-  } as ESBuildOptions
+    supported: {
+      ...fallbackSupported,
+      ...options?.supported,
+    },
+  }
 
   // Some projects in the ecosystem are calling this function with an ESBuildOptions
   // object and esbuild throws an error for extra fields
+  // @ts-expect-error include exists in ESBuildOptions
   delete resolvedOptions.include
+  // @ts-expect-error exclude exists in ESBuildOptions
   delete resolvedOptions.exclude
+  // @ts-expect-error jsxInject exists in ESBuildOptions
   delete resolvedOptions.jsxInject
 
   try {
@@ -199,6 +223,10 @@ export async function transformWithEsbuild(
     if (e.errors) {
       e.frame = ''
       e.errors.forEach((m: Message) => {
+        if (m.text === 'Experimental decorators are not currently enabled') {
+          m.text +=
+            '. Vite 4.4+ now uses esbuild 0.18 and you need to enable them by adding "experimentalDecorators": true in your "tsconfig.json" file.'
+        }
         e.frame += `\n` + prettifyMessage(m, code)
       })
       e.loc = e.errors[0].location

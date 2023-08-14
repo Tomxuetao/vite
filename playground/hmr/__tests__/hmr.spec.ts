@@ -9,7 +9,6 @@ import {
   removeFile,
   untilBrowserLogAfter,
   untilUpdated,
-  viteServer,
   viteTestUrl,
 } from '~utils'
 
@@ -677,14 +676,6 @@ if (!isBuild) {
     expect(await btn.textContent()).toBe('Compteur 0')
   })
 
-  test('virtual module in module graph', async () => {
-    const moduleGraph = viteServer.moduleGraph
-    const virtualId = Array.from(moduleGraph.idToModuleMap.keys()).filter(
-      (id: string) => id.includes('virtual'),
-    )
-    expect(virtualId).toEqual(['\x00virtual:file', '/@id/__x00__virtual:file'])
-  })
-
   test('handle virtual module updates', async () => {
     await page.goto(viteTestUrl)
     const el = await page.$('.virtual')
@@ -799,5 +790,15 @@ if (import.meta.hot) {
       '(optional-chaining) child update',
     )
     await untilUpdated(() => el.textContent(), '2')
+  })
+
+  test('issue-3033', async () => {
+    await page.goto(viteTestUrl + '/issue-3033/index.html')
+    const el = await page.$('.issue-3033')
+    expect(await el.textContent()).toBe('c')
+    editFile('issue-3033/c.js', (code) =>
+      code.replace(`export const c = 'c'`, `export const c = 'cc'`),
+    )
+    await untilUpdated(() => el.textContent(), 'cc')
   })
 }

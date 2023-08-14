@@ -30,9 +30,12 @@ export const ports = {
   'ssr-noexternal': 9603,
   'ssr-pug': 9604,
   'ssr-webworker': 9605,
+  'proxy-hmr': 9606, // not imported but used in `proxy-hmr/vite.config.js`
+  'proxy-hmr/other-app': 9607, // not imported but used in `proxy-hmr/other-app/vite.config.js`
   'css/postcss-caching': 5005,
   'css/postcss-plugins-different-dir': 5006,
   'css/dynamic-import': 5007,
+  'css/lightningcss-proxy': 5008,
 }
 export const hmrPorts = {
   'optimize-missing-deps': 24680,
@@ -41,6 +44,7 @@ export const hmrPorts = {
   'ssr-html': 24683,
   'ssr-noexternal': 24684,
   'ssr-pug': 24685,
+  'css/lightningcss-proxy': 24686,
 }
 
 const hexToNameMap: Record<string, string> = {}

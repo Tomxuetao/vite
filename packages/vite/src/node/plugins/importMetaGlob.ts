@@ -51,7 +51,14 @@ export function getAffectedGlobModules(
 ): ModuleNode[] {
   const modules: ModuleNode[] = []
   for (const [id, allGlobs] of server._importGlobMap!) {
-    if (allGlobs.some((glob) => isMatch(file, glob)))
+    // (glob1 || glob2) && !glob3 && !glob4...
+    if (
+      allGlobs.some(
+        ({ affirmed, negated }) =>
+          (!affirmed.length || affirmed.some((glob) => isMatch(file, glob))) &&
+          (!negated.length || negated.every((glob) => isMatch(file, glob))),
+      )
+    )
       modules.push(...(server.moduleGraph.getModulesByFile(id) || []))
   }
   modules.forEach((i) => {
@@ -83,7 +90,18 @@ export function importGlobPlugin(config: ResolvedConfig): Plugin {
       if (result) {
         if (server) {
           const allGlobs = result.matches.map((i) => i.globsResolved)
-          server._importGlobMap.set(id, allGlobs)
+          server._importGlobMap.set(
+            id,
+            allGlobs.map((globs) => {
+              const affirmed: string[] = []
+              const negated: string[] = []
+
+              for (const glob of globs) {
+                ;(glob[0] === '!' ? negated : affirmed).push(glob)
+              }
+              return { affirmed, negated }
+            }),
+          )
         }
         return transformStableResult(result.s, id, config)
       }
@@ -355,7 +373,7 @@ export async function transformGlobImport(
 ): Promise<TransformGlobImportResult | null> {
   id = slash(id)
   root = slash(root)
-  const isVirtual = !isAbsolute(id)
+  const isVirtual = isVirtualModule(id)
   const dir = isVirtual ? undefined : dirname(id)
   const matches = await parseImportGlob(
     code,
@@ -601,7 +619,7 @@ export async function toAbsoluteGlob(
   if (glob.startsWith('../')) return pre + posix.join(dir, glob)
   if (glob.startsWith('**')) return pre + glob
 
-  const isSubImportsPattern = glob.startsWith('#') && glob.includes('*')
+  const isSubImportsPattern = glob[0] === '#' && glob.includes('*')
 
   const resolved = normalizePath(
     (await resolveId(glob, importer, {
@@ -644,4 +662,9 @@ export function getCommonBase(globsResolved: string[]): null | string {
   if (!commonAncestor) commonAncestor = '/'
 
   return commonAncestor
+}
+
+export function isVirtualModule(id: string): boolean {
+  // https://vitejs.dev/guide/api-plugin.html#virtual-modules-convention
+  return id.startsWith('virtual:') || id[0] === '\0' || !id.includes('/')
 }
