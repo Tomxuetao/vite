@@ -76,7 +76,7 @@ const optimizedDepDynamicRE = /-[A-Z\d]{8}\.js/
 
 const hasImportInQueryParamsRE = /[?&]import=?\b/
 
-const hasViteIgnoreRE = /\/\*\s*@vite-ignore\s*\*\//
+export const hasViteIgnoreRE = /\/\*\s*@vite-ignore\s*\*\//
 
 const cleanUpRawUrlRE = /\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm
 const urlIsStringRE = /^(?:'.*'|".*"|`.*`)$/
@@ -557,7 +557,11 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
             }
 
             // record as safe modules
-            server?.moduleGraph.safeModulesPath.add(fsPathFromUrl(url))
+            // safeModulesPath should not include the base prefix.
+            // See https://github.com/vitejs/vite/issues/9438#issuecomment-1465270409
+            server?.moduleGraph.safeModulesPath.add(
+              fsPathFromUrl(stripBase(url, base)),
+            )
 
             if (url !== specifier) {
               let rewriteDone = false

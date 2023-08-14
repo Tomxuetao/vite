@@ -38,13 +38,13 @@ import type { ResolvedConfig } from '../config'
 import type { Plugin } from '../plugin'
 import {
   arraify,
-  arrayEqual,
   asyncReplace,
   cleanUrl,
   combineSourcemaps,
   emptyCssComments,
   generateCodeFrame,
   getHash,
+  getPackageManagerCommand,
   isDataUrl,
   isExternalUrl,
   isObject,
@@ -682,16 +682,22 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
             `var ${style} = document.createElement('style');` +
             `${style}.textContent = ${cssString};` +
             `document.head.appendChild(${style});`
+          let injectionPoint
           const wrapIdx = code.indexOf('System.register')
-          const executeFnStart =
-            code.indexOf('{', code.indexOf('execute:', wrapIdx)) + 1
+          if (wrapIdx >= 0) {
+            const executeFnStart = code.indexOf('execute:', wrapIdx)
+            injectionPoint = code.indexOf('{', executeFnStart) + 1
+          } else {
+            const insertMark = "'use strict';"
+            injectionPoint = code.indexOf(insertMark) + insertMark.length
+          }
           const s = new MagicString(code)
-          s.appendRight(executeFnStart, injectCode)
+          s.appendRight(injectionPoint, injectCode)
           if (config.build.sourcemap) {
             // resolve public URL from CSS paths, we need to use absolute paths
             return {
               code: s.toString(),
-              map: s.generateMap({ hires: true }),
+              map: s.generateMap({ hires: 'boundary' }),
             }
           } else {
             return { code: s.toString() }
@@ -728,21 +734,17 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
       // remove empty css chunks and their imports
       if (pureCssChunks.size) {
         // map each pure css chunk (rendered chunk) to it's corresponding bundle
-        // chunk. we check that by comparing the `moduleIds` as they have different
-        // filenames (rendered chunk has the !~{XXX}~ placeholder)
-        const pureCssChunkNames: string[] = []
-        for (const pureCssChunk of pureCssChunks) {
-          for (const key in bundle) {
-            const bundleChunk = bundle[key]
-            if (
-              bundleChunk.type === 'chunk' &&
-              arrayEqual(bundleChunk.moduleIds, pureCssChunk.moduleIds)
-            ) {
-              pureCssChunkNames.push(key)
-              break
-            }
-          }
-        }
+        // chunk. we check that by `preliminaryFileName` as they have different
+        // `filename`s (rendered chunk has the !~{XXX}~ placeholder)
+        const prelimaryNameToChunkMap = Object.fromEntries(
+          Object.values(bundle)
+            .filter((chunk): chunk is OutputChunk => chunk.type === 'chunk')
+            .map((chunk) => [chunk.preliminaryFileName, chunk.fileName]),
+        )
+
+        const pureCssChunkNames = [...pureCssChunks].map(
+          (pureCssChunk) => prelimaryNameToChunkMap[pureCssChunk.fileName],
+        )
 
         const emptyChunkFiles = pureCssChunkNames
           .map((file) => path.basename(file))
@@ -1688,8 +1690,9 @@ function loadPreprocessor(
     return (loadedPreprocessors[lang] = _require(resolved))
   } catch (e) {
     if (e.code === 'MODULE_NOT_FOUND') {
+      const installCommand = getPackageManagerCommand('install')
       throw new Error(
-        `Preprocessor dependency "${lang}" not found. Did you install it?`,
+        `Preprocessor dependency "${lang}" not found. Did you install it? Try \`${installCommand} -D ${lang}\`.`,
       )
     } else {
       const message = new Error(
@@ -2124,7 +2127,7 @@ async function getSource(
   ms.appendLeft(0, sep)
   ms.appendLeft(0, additionalData)
 
-  const map = ms.generateMap({ hires: true })
+  const map = ms.generateMap({ hires: 'boundary' })
   map.file = filename
   map.sources = [filename]
 
@@ -2175,6 +2178,10 @@ async function compileLightningCSS(
         resolver: {
           read(filePath) {
             if (filePath === filename) {
+              return src
+            }
+            // This happens with html-proxy (#13776)
+            if (!filePath.endsWith('.css')) {
               return src
             }
             return fs.readFileSync(toAbsolute(filePath), 'utf-8')
