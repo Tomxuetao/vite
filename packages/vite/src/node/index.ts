@@ -34,7 +34,6 @@ export type {
 export type {
   PreviewOptions,
   PreviewServer,
-  PreviewServerForHook,
   PreviewServerHook,
   ResolvedPreviewOptions,
 } from './preview'
@@ -52,7 +51,6 @@ export type {
   ResolvedSSROptions,
   SsrDepOptimizationOptions,
   SSROptions,
-  SSRFormat,
   SSRTarget,
 } from './ssr'
 export type { Plugin, HookHandler } from './plugin'
@@ -84,6 +82,7 @@ export type { ESBuildOptions, ESBuildTransformResult } from './plugins/esbuild'
 export type { Manifest, ManifestChunk } from './plugins/manifest'
 export type { ResolveOptions, InternalResolveOptions } from './plugins/resolve'
 export type { SplitVendorChunkCache } from './plugins/splitVendorChunk'
+export type { TerserOptions } from './plugins/terser'
 
 export type {
   WebSocketServer,
@@ -99,6 +98,8 @@ export type {
   TransformResult,
 } from './server/transformRequest'
 export type { HmrOptions, HmrContext } from './server/hmr'
+
+export type { BindCLIShortcutsOptions, CLIShortcut } from './shortcuts'
 
 export type {
   HMRPayload,
@@ -117,7 +118,6 @@ export type {
 } from 'types/customEvent'
 export type {
   ImportGlobFunction,
-  ImportGlobEagerFunction,
   ImportGlobOptions,
   GeneralImportGlobOptions,
   KnownAsTypeMap,

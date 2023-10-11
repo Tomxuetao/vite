@@ -282,7 +282,7 @@ const devHtmlHook: IndexHtmlTransformHook = async (
       const result = await server!.pluginContainer.transform(code, mod.id!)
       let content = ''
       if (result) {
-        if (result.map) {
+        if (result.map && 'version' in result.map) {
           if (result.map.mappings) {
             await injectSourcesContent(
               result.map,
@@ -360,6 +360,9 @@ function preTransformRequest(server: ViteDevServer, url: string, base: string) {
       return
     }
     // Unexpected error, log the issue but avoid an unhandled exception
-    server.config.logger.error(e.message)
+    server.config.logger.error(`Pre-transform error: ${e.message}`, {
+      error: e,
+      timestamp: true,
+    })
   })
 }

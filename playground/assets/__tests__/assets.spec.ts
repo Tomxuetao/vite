@@ -37,15 +37,27 @@ test('should have no 404s', () => {
 })
 
 test('should get a 404 when using incorrect case', async () => {
-  expect((await fetchPath('icon.png')).status).toBe(200)
-  // won't be wrote to index.html because the url includes `.`
-  expect((await fetchPath('ICON.png')).status).toBe(404)
-
-  expect((await fetchPath('bar')).status).toBe(200)
+  expect((await fetchPath('icon.png')).headers.get('Content-Type')).toBe(
+    'image/png',
+  )
   // fallback to index.html
-  const incorrectBarFetch = await fetchPath('BAR')
-  expect(incorrectBarFetch.status).toBe(200)
-  expect(incorrectBarFetch.headers.get('Content-Type')).toContain('text/html')
+  const iconPngResult = await fetchPath('ICON.png')
+  expect(iconPngResult.headers.get('Content-Type')).toBe(
+    isBuild ? 'text/html;charset=utf-8' : 'text/html',
+  )
+  expect(iconPngResult.status).toBe(200)
+
+  expect((await fetchPath('bar')).headers.get('Content-Type')).toBe('')
+  // fallback to index.html
+  const barResult = await fetchPath('BAR')
+  expect(barResult.headers.get('Content-Type')).toContain(
+    isBuild ? 'text/html;charset=utf-8' : 'text/html',
+  )
+  expect(barResult.status).toBe(200)
+})
+
+test('should fallback to index.html when accessing non-existant html file', async () => {
+  expect((await fetchPath('doesnt-exist.html')).status).toBe(200)
 })
 
 describe('injected scripts', () => {
