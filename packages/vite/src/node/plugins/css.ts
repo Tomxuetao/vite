@@ -6,7 +6,7 @@ import glob from 'fast-glob'
 import postcssrc from 'postcss-load-config'
 import type {
   ExistingRawSourceMap,
-  NormalizedOutputOptions,
+  ModuleFormat,
   OutputChunk,
   RenderedChunk,
   RollupError,
@@ -376,8 +376,8 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
 
   // when there are multiple rollup outputs and extracting CSS, only emit once,
   // since output formats have no effect on the generated CSS.
-  let outputToExtractedCSSMap: Map<NormalizedOutputOptions, string>
   let hasEmitted = false
+  let chunkCSSMap: Map<string, string>
 
   const rollupOptionsOutput = config.build.rollupOptions.output
   const assetFileNames = (
@@ -407,8 +407,8 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
     renderStart() {
       // Ensure new caches for every build (i.e. rebuilding in watch mode)
       pureCssChunks = new Set<RenderedChunk>()
-      outputToExtractedCSSMap = new Map<NormalizedOutputOptions, string>()
       hasEmitted = false
+      chunkCSSMap = new Map()
       emitTasks = []
     },
 
@@ -700,10 +700,7 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
         chunkCSS = resolveAssetUrlsInCss(chunkCSS, cssBundleName)
         // finalizeCss is called for the aggregated chunk in generateBundle
 
-        outputToExtractedCSSMap.set(
-          opts,
-          (outputToExtractedCSSMap.get(opts) || '') + chunkCSS,
-        )
+        chunkCSSMap.set(chunk.fileName, chunkCSS)
       }
       return null
     },
@@ -739,16 +736,11 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
           (pureCssChunk) => prelimaryNameToChunkMap[pureCssChunk.fileName],
         )
 
-        const emptyChunkFiles = pureCssChunkNames
-          .map((file) => path.basename(file))
-          .join('|')
-          .replace(/\./g, '\\.')
-        const emptyChunkRE = new RegExp(
-          opts.format === 'es'
-            ? `\\bimport\\s*["'][^"']*(?:${emptyChunkFiles})["'];\n?`
-            : `\\brequire\\(\\s*["'][^"']*(?:${emptyChunkFiles})["']\\);\n?`,
-          'g',
+        const replaceEmptyChunk = getEmptyChunkReplacer(
+          pureCssChunkNames,
+          opts.format,
         )
+
         for (const file in bundle) {
           const chunk = bundle[file]
           if (chunk.type === 'chunk') {
@@ -770,13 +762,10 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
               }
               return true
             })
-            chunk.code = chunk.code.replace(
-              emptyChunkRE,
-              // remove css import while preserving source map location
-              (m) => `/* empty css ${''.padEnd(m.length - 15)}*/`,
-            )
+            chunk.code = replaceEmptyChunk(chunk.code)
           }
         }
+
         const removedPureCssFiles = removedPureCssFilesCache.get(config)!
         pureCssChunkNames.forEach((fileName) => {
           removedPureCssFiles.set(fileName, bundle[fileName] as RenderedChunk)
@@ -785,8 +774,31 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
         })
       }
 
-      let extractedCss = outputToExtractedCSSMap.get(opts)
-      if (extractedCss && !hasEmitted) {
+      function extractCss() {
+        let css = ''
+        const collected = new Set<OutputChunk>()
+        const prelimaryNameToChunkMap = new Map(
+          Object.values(bundle)
+            .filter((chunk): chunk is OutputChunk => chunk.type === 'chunk')
+            .map((chunk) => [chunk.preliminaryFileName, chunk]),
+        )
+
+        function collect(fileName: string) {
+          const chunk = bundle[fileName]
+          if (!chunk || chunk.type !== 'chunk' || collected.has(chunk)) return
+          collected.add(chunk)
+
+          chunk.imports.forEach(collect)
+          css += chunkCSSMap.get(chunk.preliminaryFileName) ?? ''
+        }
+
+        for (const chunkName of chunkCSSMap.keys())
+          collect(prelimaryNameToChunkMap.get(chunkName)?.fileName ?? '')
+
+        return css
+      }
+      let extractedCss = !hasEmitted && extractCss()
+      if (extractedCss) {
         hasEmitted = true
         extractedCss = await finalizeCss(extractedCss, true, config)
         this.emitFile({
@@ -797,6 +809,35 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
       }
     },
   }
+}
+
+/**
+ * Create a replacer function that takes code and replaces given pure CSS chunk imports
+ * @param pureCssChunkNames The chunks that only contain pure CSS and should be replaced
+ * @param outputFormat The module output format to decide whether to replace `import` or `require`
+ */
+export function getEmptyChunkReplacer(
+  pureCssChunkNames: string[],
+  outputFormat: ModuleFormat,
+): (code: string) => string {
+  const emptyChunkFiles = pureCssChunkNames
+    .map((file) => path.basename(file))
+    .join('|')
+    .replace(/\./g, '\\.')
+
+  const emptyChunkRE = new RegExp(
+    outputFormat === 'es'
+      ? `\\bimport\\s*["'][^"']*(?:${emptyChunkFiles})["'];\n?`
+      : `\\brequire\\(\\s*["'][^"']*(?:${emptyChunkFiles})["']\\);\n?`,
+    'g',
+  )
+
+  return (code: string) =>
+    code.replace(
+      emptyChunkRE,
+      // remove css import while preserving source map location
+      (m) => `/* empty css ${''.padEnd(m.length - 15)}*/`,
+    )
 }
 
 interface CSSAtImportResolvers {
