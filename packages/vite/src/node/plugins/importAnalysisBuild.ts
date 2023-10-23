@@ -24,7 +24,7 @@ import { toOutputFilePathInJS } from '../build'
 import { genSourceMapUrl } from '../server/sourcemap'
 import { getDepsOptimizer, optimizedDepNeedsInterop } from '../optimizer'
 import { removedPureCssFilesCache } from './css'
-import { interopNamedImports } from './importAnalysis'
+import { createParseErrorInfo, interopNamedImports } from './importAnalysis'
 
 type FileDep = {
   url: string
@@ -223,7 +223,11 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
       try {
         imports = parseImports(source)[0]
       } catch (e: any) {
-        this.error(e, e.idx)
+        const { message, showCodeFrame } = createParseErrorInfo(
+          importer,
+          source,
+        )
+        this.error(message, showCodeFrame ? e.idx : undefined)
       }
 
       if (!imports.length) {
@@ -257,7 +261,9 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
           }
         }
 
-        const resolved = await this.resolve(url, importerFile)
+        const resolved = await this.resolve(url, importerFile, {
+          skipSelf: false,
+        })
 
         if (!resolved) {
           // in ssr, we should let node handle the missing modules
@@ -301,13 +307,13 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
           se: expEnd,
           n: specifier,
           d: dynamicIndex,
-          a: assertIndex,
+          a: attributeIndex,
         } = imports[index]
 
         const isDynamicImport = dynamicIndex > -1
 
-        // strip import assertions as we can process them ourselves
-        if (!isDynamicImport && assertIndex > -1) {
+        // strip import attributes as we can process them ourselves
+        if (!isDynamicImport && attributeIndex > -1) {
           str().remove(end + 1, expEnd)
         }
 
