@@ -165,6 +165,7 @@ const inlineRE = /[?&]inline\b/
 const inlineCSSRE = /[?&]inline-css\b/
 const styleAttrRE = /[?&]style-attr\b/
 const varRE = /^var\(/i
+const nonEscapedDoubleQuoteRe = /(?<!\\)(")/g
 
 const cssBundleName = 'style.css'
 
@@ -423,6 +424,23 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
 
       css = stripBomTag(css)
 
+      // cache css compile result to map
+      // and then use the cache replace inline-style-flag
+      // when `generateBundle` in vite:build-html plugin and devHtmlHook
+      const inlineCSS = inlineCSSRE.test(id)
+      const isHTMLProxy = htmlProxyRE.test(id)
+      if (inlineCSS && isHTMLProxy) {
+        const query = parseRequest(id)
+        if (styleAttrRE.test(id)) {
+          css = css.replace(/"/g, '&quot;')
+        }
+        addToHTMLProxyTransformResult(
+          `${getHash(cleanUrl(id))}_${Number.parseInt(query!.index)}`,
+          css,
+        )
+        return `export default ''`
+      }
+
       const inlined = inlineRE.test(id)
       const modules = cssModulesCache.get(config)!.get(id)
 
@@ -475,21 +493,6 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
       // build CSS handling ----------------------------------------------------
 
       // record css
-      // cache css compile result to map
-      // and then use the cache replace inline-style-flag when `generateBundle` in vite:build-html plugin
-      const inlineCSS = inlineCSSRE.test(id)
-      const isHTMLProxy = htmlProxyRE.test(id)
-      const query = parseRequest(id)
-      if (inlineCSS && isHTMLProxy) {
-        if (styleAttrRE.test(id)) {
-          css = css.replace(/"/g, '&quot;')
-        }
-        addToHTMLProxyTransformResult(
-          `${getHash(cleanUrl(id))}_${Number.parseInt(query!.index)}`,
-          css,
-        )
-        return `export default ''`
-      }
       if (!inlined) {
         styles.set(id, css)
       }
@@ -1510,10 +1513,19 @@ async function doUrlReplace(
     return matched
   }
 
-  const newUrl = await replacer(rawUrl)
+  let newUrl = await replacer(rawUrl)
+  // The new url might need wrapping even if the original did not have it, e.g. if a space was added during replacement
   if (wrap === '' && newUrl !== encodeURI(newUrl)) {
-    // The new url might need wrapping even if the original did not have it, e.g. if a space was added during replacement
-    wrap = "'"
+    wrap = '"'
+  }
+  // If wrapping in single quotes and newUrl also contains single quotes, switch to double quotes.
+  // Give preference to double quotes since SVG inlining converts double quotes to single quotes.
+  if (wrap === "'" && newUrl.includes("'")) {
+    wrap = '"'
+  }
+  // Escape double quotes if they exist (they also tend to be rarer than single quotes)
+  if (wrap === '"' && newUrl.includes('"')) {
+    newUrl = newUrl.replace(nonEscapedDoubleQuoteRe, '\\"')
   }
   return `${funcName}(${wrap}${newUrl}${wrap})`
 }
