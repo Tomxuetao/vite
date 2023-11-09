@@ -5,7 +5,7 @@
   <link class="ico" rel="icon" type="image/svg+xml" href="favicon.ico" />
 </head>
 
-<link rel="icon" href="data:," />
+<link class="data-href" rel="icon" href="data:," />
 <link rel="stylesheet" href="/raw.css" />
 
 <h1>Assets</h1>
@@ -149,6 +149,12 @@
     class="img-src-set-public"
     src="/icon space.png"
     srcset="/icon.png 1x, /icon.png 2x"
+    alt=""
+  />
+  <img
+    class="img-src-set-mixed"
+    src="/icon.png"
+    srcset="https://vitejs.dev/logo-with-shadow.png 1x, ./nested/asset.png 2x"
     alt=""
   />
 </div>
