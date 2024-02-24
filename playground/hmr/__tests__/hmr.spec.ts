@@ -1,12 +1,15 @@
 import { beforeAll, describe, expect, it, test } from 'vitest'
+import { hasWindowsUnicodeFsBug } from '../../hasWindowsUnicodeFsBug'
 import {
   addFile,
   browserLogs,
   editFile,
   getBg,
+  getColor,
   isBuild,
   page,
   removeFile,
+  serverLogs,
   untilBrowserLogAfter,
   untilUpdated,
   viteTestUrl,
@@ -21,7 +24,7 @@ test('should render', async () => {
 if (!isBuild) {
   test('should connect', async () => {
     expect(browserLogs.length).toBe(3)
-    expect(browserLogs.some((msg) => msg.match('connected'))).toBe(true)
+    expect(browserLogs.some((msg) => msg.includes('connected'))).toBe(true)
     browserLogs.length = 0
   })
 
@@ -183,6 +186,17 @@ if (!isBuild) {
       () => el.textContent(),
       'soft-invalidation/index.js is transformed 1 times. child is updated',
     )
+
+    editFile('soft-invalidation/index.js', (code) =>
+      code.replace('child is', 'child is now'),
+    )
+    editFile('soft-invalidation/child.js', (code) =>
+      code.replace('updated', 'updated?'),
+    )
+    await untilUpdated(
+      () => el.textContent(),
+      'soft-invalidation/index.js is transformed 2 times. child is now updated?',
+    )
   })
 
   test('plugin hmr handler + custom event', async () => {
@@ -204,21 +218,24 @@ if (!isBuild) {
     await untilUpdated(() => el.textContent(), '3')
   })
 
-  test('full-reload encodeURI path', async () => {
-    await page.goto(
-      viteTestUrl + '/unicode-path/中文-にほんご-한글-🌕🌖🌗/index.html',
-    )
-    const el = await page.$('#app')
-    expect(await el.textContent()).toBe('title')
-    editFile('unicode-path/中文-にほんご-한글-🌕🌖🌗/index.html', (code) =>
-      code.replace('title', 'title2'),
-    )
-    await page.waitForEvent('load')
-    await untilUpdated(
-      async () => (await page.$('#app')).textContent(),
-      'title2',
-    )
-  })
+  test.skipIf(hasWindowsUnicodeFsBug)(
+    'full-reload encodeURI path',
+    async () => {
+      await page.goto(
+        viteTestUrl + '/unicode-path/中文-にほんご-한글-🌕🌖🌗/index.html',
+      )
+      const el = await page.$('#app')
+      expect(await el.textContent()).toBe('title')
+      editFile('unicode-path/中文-にほんご-한글-🌕🌖🌗/index.html', (code) =>
+        code.replace('title', 'title2'),
+      )
+      await page.waitForEvent('load')
+      await untilUpdated(
+        async () => (await page.$('#app')).textContent(),
+        'title2',
+      )
+    },
+  )
 
   test('CSS update preserves query params', async () => {
     await page.goto(viteTestUrl)
@@ -881,6 +898,10 @@ if (import.meta.hot) {
       () => page.textContent('.self-accept-within-circular'),
       'cc',
     )
+    expect(serverLogs.length).greaterThanOrEqual(1)
+    // Should still keep hmr update, but it'll error on the browser-side and will refresh itself.
+    // Match on full log not possible because of color markers
+    expect(serverLogs.at(-1)!).toContain('hmr update')
   })
 
   test('hmr should not reload if no accepted within circular imported files', async () => {
@@ -909,5 +930,12 @@ if (import.meta.hot) {
       /Logo updated/,
     )
     await untilUpdated(() => el.evaluate((it) => `${it.clientHeight}`), '40')
+  })
+
+  test('CSS HMR with this.addWatchFile', async () => {
+    await page.goto(viteTestUrl + '/css-deps/index.html')
+    expect(await getColor('.css-deps')).toMatch('red')
+    editFile('css-deps/dep.js', (code) => code.replace(`red`, `green`))
+    await untilUpdated(() => getColor('.css-deps'), 'green')
   })
 }

@@ -56,8 +56,8 @@ test('generates assets', async () => {
           'index-legacy: text/html',
           'chunk-async: text/html',
           'chunk-async-legacy: text/html',
-          'immutable-chunk: application/javascript',
-          'immutable-chunk-legacy: application/javascript',
+          'immutable-chunk: text/javascript',
+          'immutable-chunk-legacy: text/javascript',
           'polyfills-legacy: text/html',
         ].join('\n')
       : [
@@ -120,11 +120,13 @@ describe.runIf(isBuild)('build', () => {
     const terserPattern = /^(?:!function|System.register)/
 
     expect(findAssetFile(/chunk-async-legacy/)).toMatch(terserPattern)
-    expect(findAssetFile(/chunk-async\./)).not.toMatch(terserPattern)
+    expect(findAssetFile(/chunk-async(?!-legacy)/)).not.toMatch(terserPattern)
     expect(findAssetFile(/immutable-chunk-legacy/)).toMatch(terserPattern)
-    expect(findAssetFile(/immutable-chunk\./)).not.toMatch(terserPattern)
+    expect(findAssetFile(/immutable-chunk(?!-legacy)/)).not.toMatch(
+      terserPattern,
+    )
     expect(findAssetFile(/index-legacy/)).toMatch(terserPattern)
-    expect(findAssetFile(/index\./)).not.toMatch(terserPattern)
+    expect(findAssetFile(/index(?!-legacy)/)).not.toMatch(terserPattern)
     expect(findAssetFile(/polyfills-legacy/)).toMatch(terserPattern)
   })
 
@@ -148,5 +150,14 @@ describe.runIf(isBuild)('build', () => {
         /polyfills-legacy.+\.map$/.test(filename),
       ),
     ).toBeFalsy()
+  })
+
+  test('should have only modern entry files guarded', async () => {
+    const guard = /(import\s*\()|(import.meta)|(async\s*function\*)/
+    expect(findAssetFile(/index(?!-legacy)/)).toMatch(guard)
+    expect(findAssetFile(/polyfills(?!-legacy)/)).toMatch(guard)
+
+    expect(findAssetFile(/chunk-async(?!-legacy)/)).not.toMatch(guard)
+    expect(findAssetFile(/index-legacy/)).not.toMatch(guard)
   })
 })

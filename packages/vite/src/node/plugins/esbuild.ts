@@ -12,7 +12,6 @@ import type { InternalModuleFormat, SourceMap } from 'rollup'
 import type { TSConfckParseResult } from 'tsconfck'
 import { TSConfckCache, TSConfckParseError, parse } from 'tsconfck'
 import {
-  cleanUrl,
   combineSourcemaps,
   createDebugger,
   createFilter,
@@ -22,6 +21,7 @@ import {
 import type { ViteDevServer } from '../server'
 import type { ResolvedConfig } from '../config'
 import type { Plugin } from '../plugin'
+import { cleanUrl } from '../../shared/utils'
 
 const debug = createDebugger('vite:esbuild')
 
@@ -320,10 +320,10 @@ export const buildEsbuildPlugin = (config: ResolvedConfig): Plugin => {
         const esbuildCode = res.code
         const contentIndex =
           opts.format === 'iife'
-            ? esbuildCode.match(IIFE_BEGIN_RE)?.index || 0
+            ? Math.max(esbuildCode.search(IIFE_BEGIN_RE), 0)
             : opts.format === 'umd'
-            ? esbuildCode.indexOf(`(function(`) // same for minified or not
-            : 0
+              ? esbuildCode.indexOf(`(function(`) // same for minified or not
+              : 0
         if (contentIndex > 0) {
           const esbuildHelpers = esbuildCode.slice(0, contentIndex)
           res.code = esbuildCode
@@ -357,6 +357,7 @@ export function resolveEsbuildTranspileOptions(
   const options: TransformOptions = {
     charset: 'utf8',
     ...esbuildOptions,
+    loader: 'js',
     target: target || undefined,
     format: rollupToEsbuildFormatMap[format],
     // the final build should always support dynamic import and import.meta.
@@ -432,33 +433,18 @@ export function resolveEsbuildTranspileOptions(
 function prettifyMessage(m: Message, code: string): string {
   let res = colors.yellow(m.text)
   if (m.location) {
-    const lines = code.split(/\r?\n/g)
-    const line = Number(m.location.line)
-    const column = Number(m.location.column)
-    const offset =
-      lines
-        .slice(0, line - 1)
-        .map((l) => l.length)
-        .reduce((total, l) => total + l + 1, 0) + column
-    res += `\n` + generateCodeFrame(code, offset, offset + 1)
+    res += `\n` + generateCodeFrame(code, m.location)
   }
   return res + `\n`
 }
 
 let tsconfckCache: TSConfckCache<TSConfckParseResult> | undefined
 
-async function loadTsconfigJsonForFile(
+export async function loadTsconfigJsonForFile(
   filename: string,
 ): Promise<TSConfigJSON> {
   try {
-    if (tsconfckCache) {
-      // shortcut, the cache stores resolved TSConfckParseResult
-      // so getting it from the cache directly we bypass async fn call wrapping it in a promise again
-      if (tsconfckCache.hasParseResult(filename)) {
-        const result = await tsconfckCache.getParseResult(filename)
-        return result.tsconfig
-      }
-    } else {
+    if (!tsconfckCache) {
       tsconfckCache = new TSConfckCache<TSConfckParseResult>()
     }
     const result = await parse(filename, {
@@ -505,7 +491,7 @@ async function reloadOnTsconfigChange(changedFile: string) {
     // server may not be available if vite config is updated at the same time
     if (server) {
       // force full reload
-      server.ws.send({
+      server.hot.send({
         type: 'full-reload',
         path: '*',
       })

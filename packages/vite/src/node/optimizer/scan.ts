@@ -20,7 +20,7 @@ import {
   SPECIAL_QUERY_RE,
 } from '../constants'
 import {
-  cleanUrl,
+  arraify,
   createDebugger,
   dataUrlRE,
   externalRE,
@@ -37,6 +37,8 @@ import {
 import type { PluginContainer } from '../server/pluginContainer'
 import { createPluginContainer } from '../server/pluginContainer'
 import { transformGlobImport } from '../plugins/importMetaGlob'
+import { cleanUrl } from '../../shared/utils'
+import { loadTsconfigJsonForFile } from '../plugins/esbuild'
 
 type ResolveIdOptions = Parameters<PluginContainer['resolveId']>[2]
 
@@ -216,6 +218,21 @@ async function prepareEsbuildScanner(
   const { plugins = [], ...esbuildOptions } =
     config.optimizeDeps?.esbuildOptions ?? {}
 
+  // The plugin pipeline automatically loads the closest tsconfig.json.
+  // But esbuild doesn't support reading tsconfig.json if the plugin has resolved the path (https://github.com/evanw/esbuild/issues/2265).
+  // Due to syntax incompatibilities between the experimental decorators in TypeScript and TC39 decorators,
+  // we cannot simply set `"experimentalDecorators": true` or `false`. (https://github.com/vitejs/vite/pull/15206#discussion_r1417414715)
+  // Therefore, we use the closest tsconfig.json from the root to make it work in most cases.
+  let tsconfigRaw = esbuildOptions.tsconfigRaw
+  if (!tsconfigRaw && !esbuildOptions.tsconfig) {
+    const tsconfigResult = await loadTsconfigJsonForFile(
+      path.join(config.root, '_dummy.js'),
+    )
+    if (tsconfigResult.compilerOptions?.experimentalDecorators) {
+      tsconfigRaw = { compilerOptions: { experimentalDecorators: true } }
+    }
+  }
+
   return await esbuild.context({
     absWorkingDir: process.cwd(),
     write: false,
@@ -228,6 +245,7 @@ async function prepareEsbuildScanner(
     logLevel: 'silent',
     plugins: [...plugins, plugin],
     ...esbuildOptions,
+    tsconfigRaw,
   })
 }
 
@@ -239,6 +257,10 @@ function orderedDependencies(deps: Record<string, string>) {
 }
 
 function globEntries(pattern: string | string[], config: ResolvedConfig) {
+  const resolvedPatterns = arraify(pattern)
+  if (resolvedPatterns.every((str) => !glob.isDynamicPattern(str))) {
+    return resolvedPatterns.map((p) => path.resolve(config.root, p))
+  }
   return glob(pattern, {
     cwd: config.root,
     ignore: [
@@ -300,9 +322,11 @@ function esbuildScanPlugin(
     '@vite/env',
   ]
 
+  const isUnlessEntry = (path: string) => !entries.includes(path)
+
   const externalUnlessEntry = ({ path }: { path: string }) => ({
     path,
-    external: !entries.includes(path),
+    external: isUnlessEntry(path),
   })
 
   const doTransformGlobImport = async (
@@ -548,26 +572,29 @@ function esbuildScanPlugin(
       // should be faster than doing it in the catch-all via js
       // they are done after the bare import resolve because a package name
       // may end with these extensions
+      const setupExternalize = (
+        filter: RegExp,
+        doExternalize: (path: string) => boolean,
+      ) => {
+        build.onResolve({ filter }, ({ path }) => {
+          return {
+            path,
+            external: doExternalize(path),
+          }
+        })
+      }
 
       // css
-      build.onResolve({ filter: CSS_LANGS_RE }, externalUnlessEntry)
-
+      setupExternalize(CSS_LANGS_RE, isUnlessEntry)
       // json & wasm
-      build.onResolve({ filter: /\.(json|json5|wasm)$/ }, externalUnlessEntry)
-
+      setupExternalize(/\.(json|json5|wasm)$/, isUnlessEntry)
       // known asset types
-      build.onResolve(
-        {
-          filter: new RegExp(`\\.(${KNOWN_ASSET_TYPES.join('|')})$`),
-        },
-        externalUnlessEntry,
+      setupExternalize(
+        new RegExp(`\\.(${KNOWN_ASSET_TYPES.join('|')})$`),
+        isUnlessEntry,
       )
-
       // known vite query types: ?worker, ?raw
-      build.onResolve({ filter: SPECIAL_QUERY_RE }, ({ path }) => ({
-        path,
-        external: true,
-      }))
+      setupExternalize(SPECIAL_QUERY_RE, () => true)
 
       // catch all -------------------------------------------------------------
 
@@ -629,6 +656,16 @@ function esbuildScanPlugin(
         return {
           loader,
           contents,
+        }
+      })
+
+      // onResolve is not called for glob imports.
+      // we need to add that here as well until esbuild calls onResolve for glob imports.
+      // https://github.com/evanw/esbuild/issues/3317
+      build.onLoad({ filter: /.*/, namespace: 'file' }, () => {
+        return {
+          loader: 'js',
+          contents: 'export default {}',
         }
       })
     },

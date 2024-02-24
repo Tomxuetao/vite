@@ -167,6 +167,12 @@ test('resolve.mainFields', async () => {
   expect(await page.textContent('.custom-main-fields')).toMatch('[success]')
 })
 
+test('resolve.mainFields.browser-first', async () => {
+  expect(await page.textContent('.custom-browser-main-field')).toBe(
+    'resolved browser field',
+  )
+})
+
 test('resolve.conditions', async () => {
   expect(await page.textContent('.custom-condition')).toMatch('[success]')
 })
@@ -207,6 +213,10 @@ test('Resolve doesnt interrupt page request with trailing query and .css', async
   await page.goto(viteTestUrl + '/?test.css')
   expect(await page.locator('vite-error-overlay').count()).toBe(0)
   expect(await page.textContent('h1')).toBe('Resolve')
+})
+
+test('resolve non-normalized absolute path', async () => {
+  expect(await page.textContent('.non-normalized')).toMatch('[success]')
 })
 
 test.runIf(!isWindows)(

@@ -7,7 +7,6 @@ import escapeHtml from 'escape-html'
 import type { ViteDevServer } from '../..'
 import { FS_PREFIX } from '../../constants'
 import {
-  cleanUrl,
   fsPathFromId,
   fsPathFromUrl,
   isFileReadable,
@@ -15,21 +14,22 @@ import {
   isInternalRequest,
   isParentDirectory,
   isSameFileUri,
-  isWindows,
+  normalizePath,
   removeLeadingSlash,
-  shouldServeFile,
+} from '../../utils'
+import {
+  cleanUrl,
+  isWindows,
   slash,
   withTrailingSlash,
-} from '../../utils'
+} from '../../../shared/utils'
 
 const knownJavascriptExtensionRE = /\.[tj]sx?$/
 
 const sirvOptions = ({
   getHeaders,
-  shouldServe,
 }: {
   getHeaders: () => OutgoingHttpHeaders | undefined
-  shouldServe?: (p: string) => void
 }): Options => {
   return {
     dev: true,
@@ -42,7 +42,7 @@ const sirvOptions = ({
       // these files to be TypeScript files, and for Vite to serve them with
       // this Content-Type.
       if (knownJavascriptExtensionRE.test(pathname)) {
-        res.setHeader('Content-Type', 'application/javascript')
+        res.setHeader('Content-Type', 'text/javascript')
       }
       const headers = getHeaders()
       if (headers) {
@@ -51,26 +51,43 @@ const sirvOptions = ({
         }
       }
     },
-    shouldServe,
   }
 }
 
 export function servePublicMiddleware(
   server: ViteDevServer,
+  publicFiles?: Set<string>,
 ): Connect.NextHandleFunction {
   const dir = server.config.publicDir
   const serve = sirv(
     dir,
     sirvOptions({
       getHeaders: () => server.config.server.headers,
-      shouldServe: (filePath) => shouldServeFile(filePath, dir),
     }),
   )
 
+  const toFilePath = (url: string) => {
+    let filePath = cleanUrl(url)
+    if (filePath.indexOf('%') !== -1) {
+      try {
+        filePath = decodeURI(filePath)
+      } catch (err) {
+        /* malform uri */
+      }
+    }
+    return normalizePath(filePath)
+  }
+
   // Keep the named function. The name is visible in debug logs via `DEBUG=connect:dispatcher ...`
   return function viteServePublicMiddleware(req, res, next) {
-    // skip import request and internal requests `/@fs/ /@vite-client` etc...
-    if (isImportRequest(req.url!) || isInternalRequest(req.url!)) {
+    // To avoid the performance impact of `existsSync` on every request, we check against an
+    // in-memory set of known public files. This set is updated on restarts.
+    // also skip import request and internal requests `/@fs/ /@vite-client` etc...
+    if (
+      (publicFiles && !publicFiles.has(toFilePath(req.url!))) ||
+      isImportRequest(req.url!) ||
+      isInternalRequest(req.url!)
+    ) {
       return next()
     }
     serve(req, res, next)

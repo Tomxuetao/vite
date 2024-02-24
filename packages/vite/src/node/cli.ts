@@ -3,12 +3,12 @@ import fs from 'node:fs'
 import { performance } from 'node:perf_hooks'
 import { cac } from 'cac'
 import colors from 'picocolors'
+import { VERSION } from './constants'
 import type { BuildOptions } from './build'
 import type { ServerOptions } from './server'
 import type { CLIShortcut } from './shortcuts'
 import type { LogLevel } from './logger'
 import { createLogger } from './logger'
-import { VERSION } from './constants'
 import { resolveConfig } from './config'
 
 const cli = cac('vite')
@@ -95,8 +95,8 @@ function cleanOptions<Options extends GlobalCLIOptions>(
       sourcemap === 'true'
         ? true
         : sourcemap === 'false'
-        ? false
-        : ret.sourcemap
+          ? false
+          : ret.sourcemap
   }
 
   return ret
@@ -180,15 +180,15 @@ cli
             )} ms`,
           )
         : ''
+      const hasExistingLogs =
+        process.stdout.bytesWritten > 0 || process.stderr.bytesWritten > 0
 
       info(
         `\n  ${colors.green(
           `${colors.bold('VITE')} v${VERSION}`,
         )}  ${startupDurationString}\n`,
         {
-          clear:
-            !server.config.logger.hasWarned &&
-            !(globalThis as any).__vite_cjs_skip_clear_screen,
+          clear: !hasExistingLogs,
         },
       )
 
@@ -259,10 +259,6 @@ cli
   .option('--manifest [name]', `[boolean | string] emit build manifest json`)
   .option('--ssrManifest [name]', `[boolean | string] emit ssr manifest json`)
   .option(
-    '--force',
-    `[boolean] force the optimizer to ignore the cache and re-bundle (experimental)`,
-  )
-  .option(
     '--emptyOutDir',
     `[boolean] force empty outDir when it's outside of root`,
   )
@@ -280,7 +276,6 @@ cli
         configFile: options.config,
         logLevel: options.logLevel,
         clearScreen: options.clearScreen,
-        optimizeDeps: { force: options.force },
         build: buildOptions,
       })
     } catch (e) {
