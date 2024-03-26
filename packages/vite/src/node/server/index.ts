@@ -32,6 +32,7 @@ import {
   isParentDirectory,
   mergeConfig,
   normalizePath,
+  promiseWithResolvers,
   resolveHostname,
   resolveServerUrls,
 } from '../utils'
@@ -345,6 +346,22 @@ export interface ViteDevServer {
    */
   openBrowser(): void
   /**
+   * Calling `await server.waitForRequestsIdle(id)` will wait until all static imports
+   * are processed. If called from a load or transform plugin hook, the id needs to be
+   * passed as a parameter to avoid deadlocks. Calling this function after the first
+   * static imports section of the module graph has been processed will resolve immediately.
+   * @experimental
+   */
+  waitForRequestsIdle: (ignoredId?: string) => Promise<void>
+  /**
+   * @internal
+   */
+  _registerRequestProcessing: (id: string, done: () => Promise<unknown>) => void
+  /**
+   * @internal
+   */
+  _onCrawlEnd(cb: () => void): void
+  /**
    * @internal
    */
   _setInternalServer(server: ViteDevServer): void
@@ -459,6 +476,20 @@ export async function _createServer(
 
   const devHtmlTransformFn = createDevHtmlTransformFn(config)
 
+  const onCrawlEndCallbacks: (() => void)[] = []
+  const crawlEndFinder = setupOnCrawlEnd(() => {
+    onCrawlEndCallbacks.forEach((cb) => cb())
+  })
+  function waitForRequestsIdle(ignoredId?: string): Promise<void> {
+    return crawlEndFinder.waitForRequestsIdle(ignoredId)
+  }
+  function _registerRequestProcessing(id: string, done: () => Promise<any>) {
+    crawlEndFinder.registerRequestProcessing(id, done)
+  }
+  function _onCrawlEnd(cb: () => void) {
+    onCrawlEndCallbacks.push(cb)
+  }
+
   let server: ViteDevServer = {
     config,
     middlewares,
@@ -481,7 +512,9 @@ export async function _createServer(
       return transformRequest(url, server, options)
     },
     async warmupRequest(url, options) {
-      await transformRequest(url, server, options).catch((e) => {
+      try {
+        await transformRequest(url, server, options)
+      } catch (e) {
         if (
           e?.code === ERR_OUTDATED_OPTIMIZED_DEP ||
           e?.code === ERR_CLOSED_SERVER
@@ -494,7 +527,7 @@ export async function _createServer(
           error: e,
           timestamp: true,
         })
-      })
+      }
     },
     transformIndexHtml(url, html, originalUrl) {
       return devHtmlTransformFn(server, url, html, originalUrl)
@@ -590,6 +623,7 @@ export async function _createServer(
         watcher.close(),
         hot.close(),
         container.close(),
+        crawlEndFinder?.cancel(),
         getDepsOptimizer(server.config)?.close(),
         getDepsOptimizer(server.config, true)?.close(),
         closeHttpServer(),
@@ -638,6 +672,10 @@ export async function _createServer(
       return server._restartPromise
     },
 
+    waitForRequestsIdle,
+    _registerRequestProcessing,
+    _onCrawlEnd,
+
     _setInternalServer(_server: ViteDevServer) {
       // Rebind internal the server variable so functions reference the user
       // server instance after a restart
@@ -647,10 +685,19 @@ export async function _createServer(
     _importGlobMap: new Map(),
     _forceOptimizeOnRestart: false,
     _pendingRequests: new Map(),
-    _fsDenyGlob: picomatch(config.server.fs.deny, {
-      matchBase: true,
-      nocase: true,
-    }),
+    _fsDenyGlob: picomatch(
+      // matchBase: true does not work as it's documented
+      // https://github.com/micromatch/picomatch/issues/89
+      // convert patterns without `/` on our side for now
+      config.server.fs.deny.map((pattern) =>
+        pattern.includes('/') ? pattern : `**/${pattern}`,
+      ),
+      {
+        matchBase: false,
+        nocase: true,
+        dot: true,
+      },
+    ),
     _shortcutsOptions: undefined,
   }
 
@@ -1131,5 +1178,83 @@ export async function restartServerWithUrls(
   ) {
     logger.info('')
     server.printUrls()
+  }
+}
+
+const callCrawlEndIfIdleAfterMs = 50
+
+interface CrawlEndFinder {
+  registerRequestProcessing: (id: string, done: () => Promise<any>) => void
+  waitForRequestsIdle: (ignoredId?: string) => Promise<void>
+  cancel: () => void
+}
+
+function setupOnCrawlEnd(onCrawlEnd: () => void): CrawlEndFinder {
+  const registeredIds = new Set<string>()
+  const seenIds = new Set<string>()
+  const onCrawlEndPromiseWithResolvers = promiseWithResolvers<void>()
+
+  let timeoutHandle: NodeJS.Timeout | undefined
+
+  let cancelled = false
+  function cancel() {
+    cancelled = true
+  }
+
+  let crawlEndCalled = false
+  function callOnCrawlEnd() {
+    if (!cancelled && !crawlEndCalled) {
+      crawlEndCalled = true
+      onCrawlEnd()
+    }
+    onCrawlEndPromiseWithResolvers.resolve()
+  }
+
+  function registerRequestProcessing(
+    id: string,
+    done: () => Promise<any>,
+  ): void {
+    if (!seenIds.has(id)) {
+      seenIds.add(id)
+      registeredIds.add(id)
+      done()
+        .catch(() => {})
+        .finally(() => markIdAsDone(id))
+    }
+  }
+
+  function waitForRequestsIdle(ignoredId?: string): Promise<void> {
+    if (ignoredId) {
+      seenIds.add(ignoredId)
+      markIdAsDone(ignoredId)
+    }
+    return onCrawlEndPromiseWithResolvers.promise
+  }
+
+  function markIdAsDone(id: string): void {
+    if (registeredIds.has(id)) {
+      registeredIds.delete(id)
+      checkIfCrawlEndAfterTimeout()
+    }
+  }
+
+  function checkIfCrawlEndAfterTimeout() {
+    if (cancelled || registeredIds.size > 0) return
+
+    if (timeoutHandle) clearTimeout(timeoutHandle)
+    timeoutHandle = setTimeout(
+      callOnCrawlEndWhenIdle,
+      callCrawlEndIfIdleAfterMs,
+    )
+  }
+  async function callOnCrawlEndWhenIdle() {
+    if (cancelled || registeredIds.size > 0) return
+    callOnCrawlEnd()
+  }
+
+  return {
+    registerRequestProcessing,
+    waitForRequestsIdle,
+    cancel,
   }
 }

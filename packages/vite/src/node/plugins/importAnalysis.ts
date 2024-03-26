@@ -40,7 +40,6 @@ import {
   joinUrlSegments,
   moduleListContains,
   normalizePath,
-  partialEncodeURI,
   prettifyUrl,
   removeImportQuery,
   removeTimestampQuery,
@@ -594,7 +593,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
                 rewriteDone = true
               }
               if (!rewriteDone) {
-                const rewrittenUrl = JSON.stringify(partialEncodeURI(url))
+                const rewrittenUrl = JSON.stringify(url)
                 const s = isDynamicImport ? start : start - 1
                 const e = isDynamicImport ? end : end + 1
                 str().overwrite(s, e, rewrittenUrl, {
