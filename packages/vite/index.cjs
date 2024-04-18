@@ -8,7 +8,7 @@ module.exports.defineConfig = (config) => config
 // proxy cjs utils (sync functions)
 Object.assign(module.exports, require('./dist/node-cjs/publicUtils.cjs'))
 
-// async functions, can be redirect from ESM build
+// async functions, can be redirected from ESM build
 const asyncFunctions = [
   'build',
   'createServer',
