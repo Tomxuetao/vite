@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from 'vitest'
+import { hasWindowsUnicodeFsBug } from '../../hasWindowsUnicodeFsBug'
 import {
   browserLogs,
   editFile,
@@ -10,6 +11,12 @@ import {
   viteTestUrl,
   withRetry,
 } from '~utils'
+
+function fetchHtml(p: string) {
+  return fetch(viteTestUrl + p, {
+    headers: { Accept: 'text/html,*/*' },
+  })
+}
 
 function testPage(isNested: boolean) {
   test('pre transform', async () => {
@@ -212,7 +219,7 @@ describe('noBody', () => {
   })
 })
 
-describe('Unicode path', () => {
+describe.skipIf(hasWindowsUnicodeFsBug)('Unicode path', () => {
   test('direct access', async () => {
     await page.goto(
       viteTestUrl + '/unicode-path/中文-にほんご-한글-🌕🌖🌗/index.html',
@@ -267,6 +274,29 @@ describe.runIf(isServe)('invalid', () => {
     expect(isVisbleOverlay).toBeFalsy()
   })
 
+  test('stack is updated', async () => {
+    await page.goto(viteTestUrl + '/invalid.html')
+
+    const errorOverlay = await page.waitForSelector('vite-error-overlay')
+    const hiddenPromise = errorOverlay.waitForElementState('hidden')
+    await page.keyboard.press('Escape')
+    await hiddenPromise
+
+    viteServer.hot.send({
+      type: 'error',
+      err: {
+        message: 'someError',
+        stack: [
+          'Error: someError',
+          '    at someMethod (/some/file.ts:1:2)',
+        ].join('\n'),
+      },
+    })
+    const newErrorOverlay = await page.waitForSelector('vite-error-overlay')
+    const stack = await newErrorOverlay.$$eval('.stack', (m) => m[0].innerHTML)
+    expect(stack).toMatch(/^Error: someError/)
+  })
+
   test('should reload when fixed', async () => {
     await page.goto(viteTestUrl + '/invalid.html')
     await editFile('invalid.html', (content) => {
@@ -299,9 +329,6 @@ describe('env', () => {
     expect(await page.textContent('.env-define-string')).toBe('string')
     expect(await page.textContent('.env-define-object-string')).toBe(
       '{ "foo": "bar" }',
-    )
-    expect(await page.textContent('.env-define-template-literal')).toBe(
-      '`template literal`', // only double quotes will be unquoted
     )
     expect(await page.textContent('.env-define-null-string')).toBe('null')
     expect(await page.textContent('.env-bar')).toBeTruthy()
@@ -357,4 +384,73 @@ describe.runIf(isServe)('warmup', () => {
       expect(mod).toBeTruthy()
     })
   })
+})
+
+test('html serve behavior', async () => {
+  const [
+    file,
+    fileSlash,
+    fileDotHtml,
+
+    folder,
+    folderSlash,
+    folderSlashIndexHtml,
+
+    both,
+    bothSlash,
+    bothDotHtml,
+    bothSlashIndexHtml,
+  ] = await Promise.all([
+    fetchHtml('/serve/file'), // -> serve/file.html
+    fetchHtml('/serve/file/'), // -> index.html (404 in mpa)
+    fetchHtml('/serve/file.html'), // -> serve/file.html
+
+    fetchHtml('/serve/folder'), // -> index.html (404 in mpa)
+    fetchHtml('/serve/folder/'), // -> serve/folder/index.html
+    fetchHtml('/serve/folder/index.html'), // -> serve/folder/index.html
+
+    fetchHtml('/serve/both'), // -> serve/both.html
+    fetchHtml('/serve/both/'), // -> serve/both/index.html
+    fetchHtml('/serve/both.html'), // -> serve/both.html
+    fetchHtml('/serve/both/index.html'), // -> serve/both/index.html
+  ])
+
+  expect(file.status).toBe(200)
+  expect(await file.text()).toContain('file.html')
+  expect(fileSlash.status).toBe(200)
+  expect(await fileSlash.text()).toContain('index.html (fallback)')
+  expect(fileDotHtml.status).toBe(200)
+  expect(await fileDotHtml.text()).toContain('file.html')
+
+  expect(folder.status).toBe(200)
+  expect(await folder.text()).toContain('index.html (fallback)')
+  expect(folderSlash.status).toBe(200)
+  expect(await folderSlash.text()).toContain('folder/index.html')
+  expect(folderSlashIndexHtml.status).toBe(200)
+  expect(await folderSlashIndexHtml.text()).toContain('folder/index.html')
+
+  expect(both.status).toBe(200)
+  expect(await both.text()).toContain('both.html')
+  expect(bothSlash.status).toBe(200)
+  expect(await bothSlash.text()).toContain('both/index.html')
+  expect(bothDotHtml.status).toBe(200)
+  expect(await bothDotHtml.text()).toContain('both.html')
+  expect(bothSlashIndexHtml.status).toBe(200)
+  expect(await bothSlashIndexHtml.text()).toContain('both/index.html')
+})
+
+test('html fallback works non browser accept header', async () => {
+  expect((await fetch(viteTestUrl, { headers: { Accept: '' } })).status).toBe(
+    200,
+  )
+  // defaults to "Accept: */*"
+  expect((await fetch(viteTestUrl)).status).toBe(200)
+  // wait-on uses axios and axios sends this accept header
+  expect(
+    (
+      await fetch(viteTestUrl, {
+        headers: { Accept: 'application/json, text/plain, */*' },
+      })
+    ).status,
+  ).toBe(200)
 })

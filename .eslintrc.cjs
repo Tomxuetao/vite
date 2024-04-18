@@ -3,6 +3,8 @@ const { builtinModules } = require('node:module')
 const { defineConfig } = require('eslint-define-config')
 const pkg = require('./package.json')
 
+/// <reference types="@eslint-types/typescript-eslint" />
+
 module.exports = defineConfig({
   root: true,
   extends: [
@@ -13,7 +15,7 @@ module.exports = defineConfig({
     'plugin:regexp/recommended',
   ],
   ignorePatterns: ['packages/create-vite/template-**'],
-  plugins: ['import', 'regexp'],
+  plugins: ['i', 'regexp'],
   parser: '@typescript-eslint/parser',
   parserOptions: {
     sourceType: 'module',
@@ -90,12 +92,12 @@ module.exports = defineConfig({
     '@typescript-eslint/prefer-for-of': 'off',
     '@typescript-eslint/prefer-function-type': 'off',
 
-    'import/no-nodejs-modules': [
+    'i/no-nodejs-modules': [
       'error',
       { allow: builtinModules.map((mod) => `node:${mod}`) },
     ],
-    'import/no-duplicates': 'error',
-    'import/order': 'error',
+    'i/no-duplicates': 'error',
+    'i/order': 'error',
     'sort-imports': [
       'error',
       {
@@ -108,6 +110,8 @@ module.exports = defineConfig({
     ],
 
     'regexp/no-contradiction-with-assertion': 'error',
+    // in some cases using explicit letter-casing is more performant than the `i` flag
+    'regexp/use-ignore-case': 'off',
   },
   overrides: [
     {
@@ -141,6 +145,7 @@ module.exports = defineConfig({
     },
     {
       files: ['packages/vite/src/node/**'],
+      excludedFiles: '**/__tests__/**',
       rules: {
         'no-console': ['error'],
       },
@@ -170,19 +175,8 @@ module.exports = defineConfig({
         'n/no-extraneous-require': 'off',
         'n/no-missing-import': 'off',
         'n/no-missing-require': 'off',
-        // engine field doesn't exist in playgrounds
-        'n/no-unsupported-features/es-builtins': [
-          'error',
-          {
-            version: pkg.engines.node,
-          },
-        ],
-        'n/no-unsupported-features/node-builtins': [
-          'error',
-          {
-            version: pkg.engines.node,
-          },
-        ],
+        'n/no-unsupported-features/es-builtins': 'off',
+        'n/no-unsupported-features/node-builtins': 'off',
         '@typescript-eslint/explicit-module-boundary-types': 'off',
       },
     },
@@ -208,7 +202,25 @@ module.exports = defineConfig({
         'playground/tailwind/**', // blocked by https://github.com/postcss/postcss-load-config/issues/239
       ],
       rules: {
-        'import/no-commonjs': 'error',
+        'i/no-commonjs': 'error',
+      },
+    },
+    {
+      files: ['playground/**/__tests__/**'],
+      rules: {
+        // engine field doesn't exist in playgrounds
+        'n/no-unsupported-features/es-builtins': [
+          'error',
+          {
+            version: pkg.engines.node,
+          },
+        ],
+        'n/no-unsupported-features/node-builtins': [
+          'error',
+          {
+            version: pkg.engines.node,
+          },
+        ],
       },
     },
     {

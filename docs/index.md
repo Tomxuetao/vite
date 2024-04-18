@@ -21,6 +21,9 @@ hero:
     - theme: alt
       text: View on GitHub
       link: https://github.com/vitejs/vite
+    - theme: alt
+      text: 📅 Vite Meetup SF
+      link: https://lu.ma/vite
 
 features:
   - icon: 💡
@@ -42,3 +45,12 @@ features:
     title: Fully Typed APIs
     details: Flexible programmatic APIs with full TypeScript typing.
 ---
+
+<style>
+.VPButton.alt[href="https://lu.ma/vite"] {
+  background: var(--vp-home-hero-name-background);
+  border: none;
+  padding: 1px 21px;
+  color: #fff !important;
+}
+</style>

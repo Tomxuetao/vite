@@ -18,10 +18,10 @@ The first case is when `localhost` is used. Node.js under v17 reorders the resul
 
 You can set [`dns.setDefaultResultOrder('verbatim')`](https://nodejs.org/api/dns.html#dns_dns_setdefaultresultorder_order) to disable the reordering behavior. Vite will then print the address as `localhost`.
 
-```js
+```js twoslash
 // vite.config.js
 import { defineConfig } from 'vite'
-import dns from 'dns'
+import dns from 'node:dns'
 
 dns.setDefaultResultOrder('verbatim')
 
@@ -56,7 +56,7 @@ Set to `true` to exit if port is already in use, instead of automatically trying
 
 ## server.https
 
-- **Type:** `boolean | https.ServerOptions`
+- **Type:** `https.ServerOptions`
 
 Enable TLS + HTTP/2. Note this downgrades to TLS only when the [`server.proxy` option](#server-proxy) is also used.
 
@@ -90,7 +90,7 @@ Configure custom proxy rules for the dev server. Expects an object of `{ key: op
 
 Note that if you are using non-relative [`base`](/config/shared-options.md#base), you must prefix each key with that `base`.
 
-Extends [`http-proxy`](https://github.com/http-party/node-http-proxy#options). Additional options are [here](https://github.com/vitejs/vite/blob/main/packages/vite/src/node/server/middlewares/proxy.ts#L12).
+Extends [`http-proxy`](https://github.com/http-party/node-http-proxy#options). Additional options are [here](https://github.com/vitejs/vite/blob/main/packages/vite/src/node/server/middlewares/proxy.ts#L13).
 
 In some cases, you might also want to configure the underlying dev server (e.g. to add custom middlewares to the internal [connect](https://github.com/senchalabs/connect) app). In order to do that, you need to write your own [plugin](/guide/using-plugins.html) and use [configureServer](/guide/api-plugin.html#configureserver) function.
 
@@ -152,6 +152,8 @@ Disable or configure HMR connection (in cases where the HMR websocket must use a
 
 Set `server.hmr.overlay` to `false` to disable the server error overlay.
 
+`protocol` sets the WebSocket protocol used for the HMR connection: `ws` (WebSocket) or `wss` (WebSocket Secure).
+
 `clientPort` is an advanced option that overrides the port only on the client side, allowing you to serve the websocket on a different port than the client code looks for it on.
 
 When `server.hmr.server` is defined, Vite will process the HMR connection requests through the provided server. If not in middleware mode, Vite will attempt to process HMR connection requests through the existing server. This can be helpful when using self-signed certificates or when you want to expose Vite over a network on a single port.
@@ -177,26 +179,20 @@ The error that appears in the Browser when the fallback happens can be ignored. 
 ## server.warmup
 
 - **Type:** `{ clientFiles?: string[], ssrFiles?: string[] }`
+- **Related:** [Warm Up Frequently Used Files](/guide/performance.html#warm-up-frequently-used-files)
 
 Warm up files to transform and cache the results in advance. This improves the initial page load during server starts and prevents transform waterfalls.
 
-The `clientFiles` and `ssrFiles` options accept an array of file paths or glob patterns relative to the `root`. Make sure to only add files that are hot code, as otherwise adding too many may slow down the transform process.
+`clientFiles` are files that are used in the client only, while `ssrFiles` are files that are used in SSR only. They accept an array of file paths or [`fast-glob`](https://github.com/mrmlnc/fast-glob) patterns relative to the `root`.
 
-To understand why warmup can be useful, here's an example. Given this module graph where the left file imports the right file:
-
-```
-main.js -> Component.vue -> big-file.js -> large-data.json
-```
-
-The imported ids can only be known after the file is transformed, so if `Component.vue` takes some time to transform, `big-file.js` has to wait for it's turn, and so on. This causes an internal waterfall.
-
-By warming up `big-file.js`, or any files that you know is hot path in your app, they'll be cached and can be served immediately.
+Make sure to only add files that are frequently used to not overload the Vite dev server on startup.
 
 ```js
 export default defineConfig({
   server: {
     warmup: {
-      clientFiles: ['./src/big-file.js', './src/components/*.vue'],
+      clientFiles: ['./src/components/*.vue', './src/utils/big-utils.js'],
+      ssrFiles: ['./src/server/modules/*.js'],
     },
   },
 })
@@ -208,7 +204,7 @@ export default defineConfig({
 
 File system watcher options to pass on to [chokidar](https://github.com/paulmillr/chokidar#api).
 
-The Vite server watcher watches the `root` and skips the `.git/` and `node_modules/` directories by default. When updating a watched file, Vite will apply HMR and update the page only if needed.
+The Vite server watcher watches the `root` and skips the `.git/`, `node_modules/`, and Vite's `cacheDir` and `build.outDir` directories by default. When updating a watched file, Vite will apply HMR and update the page only if needed.
 
 If set to `null`, no files will be watched. `server.watcher` will provide a compatible event emitter, but calling `add` or `unwatch` will have no effect.
 
@@ -242,7 +238,7 @@ Create Vite server in middleware mode.
 
 - **Example:**
 
-```js
+```js twoslash
 import express from 'express'
 import { createServer as createViteServer } from 'vite'
 
@@ -362,9 +358,9 @@ export default defineConfig({
     // in their paths to the ignore list.
     sourcemapIgnoreList(sourcePath, sourcemapPath) {
       return sourcePath.includes('node_modules')
-    }
-  }
-};
+    },
+  },
+})
 ```
 
 ::: tip Note

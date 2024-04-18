@@ -10,7 +10,17 @@ import type { Alias, AliasOptions } from 'dep-types/alias'
 import aliasPlugin from '@rollup/plugin-alias'
 import { build } from 'esbuild'
 import type { RollupOptions } from 'rollup'
-import type { HookHandler, Plugin } from './plugin'
+import { withTrailingSlash } from '../shared/utils'
+import {
+  CLIENT_ENTRY,
+  DEFAULT_ASSETS_RE,
+  DEFAULT_CONFIG_FILES,
+  DEFAULT_EXTENSIONS,
+  DEFAULT_MAIN_FIELDS,
+  ENV_ENTRY,
+  FS_PREFIX,
+} from './constants'
+import type { HookHandler, Plugin, PluginWithRequiredHook } from './plugin'
 import type {
   BuildOptions,
   RenderBuiltAssetUrl,
@@ -39,23 +49,15 @@ import {
   mergeConfig,
   normalizeAlias,
   normalizePath,
-  withTrailingSlash,
 } from './utils'
+import { getFsUtils } from './fsUtils'
 import {
   createPluginHookUtils,
+  getHookHandler,
   getSortedPluginsByHook,
   resolvePlugins,
 } from './plugins'
 import type { ESBuildOptions } from './plugins/esbuild'
-import {
-  CLIENT_ENTRY,
-  DEFAULT_ASSETS_RE,
-  DEFAULT_CONFIG_FILES,
-  DEFAULT_EXTENSIONS,
-  DEFAULT_MAIN_FIELDS,
-  ENV_ENTRY,
-  FS_PREFIX,
-} from './constants'
 import type { InternalResolveOptions, ResolveOptions } from './plugins/resolve'
 import { resolvePlugin, tryNodeResolve } from './plugins/resolve'
 import type { LogLevel, Logger } from './logger'
@@ -74,12 +76,14 @@ const debug = createDebugger('vite:config')
 const promisifiedRealpath = promisify(fs.realpath)
 
 export interface ConfigEnv {
+  /**
+   * 'serve': during dev (`vite` command)
+   * 'build': when building for production (`vite build` command)
+   */
   command: 'build' | 'serve'
   mode: string
-  /**
-   * @experimental
-   */
-  ssrBuild?: boolean
+  isSsrBuild?: boolean
+  isPreview?: boolean
 }
 
 /**
@@ -105,8 +109,7 @@ export type UserConfigExport =
 /**
  * Type helper to make it easier to use vite.config.ts
  * accepts a direct {@link UserConfig} object, or a function that returns it.
- * The function receives a {@link ConfigEnv} object that exposes two properties:
- * `command` (either `'build'` or `'serve'`), and `mode`.
+ * The function receives a {@link ConfigEnv} object.
  */
 export function defineConfig(config: UserConfig): UserConfig
 export function defineConfig(config: Promise<UserConfig>): Promise<UserConfig>
@@ -173,6 +176,10 @@ export interface UserConfig {
    * Configure resolver
    */
   resolve?: ResolveOptions & { alias?: AliasOptions }
+  /**
+   * HTML related options
+   */
+  html?: HTMLOptions
   /**
    * CSS related options (preprocessors and CSS modules)
    */
@@ -259,7 +266,7 @@ export interface UserConfig {
      */
     format?: 'es' | 'iife'
     /**
-     * Vite plugins that apply to worker bundle. The plugins retured by this function
+     * Vite plugins that apply to worker bundle. The plugins returned by this function
      * should be new instances every time it is called, because they are used for each
      * rollup worker bundling process.
      */
@@ -279,6 +286,15 @@ export interface UserConfig {
    * @default 'spa'
    */
   appType?: AppType
+}
+
+export interface HTMLOptions {
+  /**
+   * A nonce value placeholder that will be used when generating script/style tags.
+   *
+   * Make sure that this placeholder will be replaced with a unique value for each request by the server.
+   */
+  cspNonce?: string
 }
 
 export interface ExperimentalOptions {
@@ -328,7 +344,7 @@ export interface LegacyOptions {
 
 export interface ResolvedWorkerOptions {
   format: 'es' | 'iife'
-  plugins: () => Promise<Plugin[]>
+  plugins: (bundleChain: string[]) => Promise<Plugin[]>
   rollupOptions: RollupOptions
 }
 
@@ -357,6 +373,8 @@ export type ResolvedConfig = Readonly<
     // in nested worker bundle to find the main config
     /** @internal */
     mainConfig: ResolvedConfig | null
+    /** @internal list of bundle entry id. used to detect recursive worker bundle. */
+    bundleChain: string[]
     isProduction: boolean
     envDir: string
     env: Record<string, any>
@@ -364,7 +382,7 @@ export type ResolvedConfig = Readonly<
       alias: Alias[]
     }
     plugins: readonly Plugin[]
-    css: ResolvedCSSOptions | undefined
+    css: ResolvedCSSOptions
     esbuild: ESBuildOptions | false
     server: ResolvedServerOptions
     build: ResolvedBuildOptions
@@ -383,7 +401,9 @@ export type ResolvedConfig = Readonly<
 >
 
 export interface PluginHookUtils {
-  getSortedPlugins: (hookName: keyof Plugin) => Plugin[]
+  getSortedPlugins: <K extends keyof Plugin>(
+    hookName: K,
+  ) => PluginWithRequiredHook<K>[]
   getSortedPluginHooks: <K extends keyof Plugin>(
     hookName: K,
   ) => NonNullable<HookHandler<Plugin[K]>>[]
@@ -396,11 +416,40 @@ export type ResolveFn = (
   ssr?: boolean,
 ) => Promise<string | undefined>
 
+/**
+ * Check and warn if `path` includes characters that don't work well in Vite,
+ * such as `#` and `?`.
+ */
+function checkBadCharactersInPath(path: string, logger: Logger): void {
+  const badChars = []
+
+  if (path.includes('#')) {
+    badChars.push('#')
+  }
+  if (path.includes('?')) {
+    badChars.push('?')
+  }
+
+  if (badChars.length > 0) {
+    const charString = badChars.map((c) => `"${c}"`).join(' and ')
+    const inflectedChars = badChars.length > 1 ? 'characters' : 'character'
+
+    logger.warn(
+      colors.yellow(
+        `The project root contains the ${charString} ${inflectedChars} (${colors.cyan(
+          path,
+        )}), which may not work when running Vite. Consider renaming the directory to remove the characters.`,
+      ),
+    )
+  }
+}
+
 export async function resolveConfig(
   inlineConfig: InlineConfig,
   command: 'build' | 'serve',
   defaultMode = 'development',
   defaultNodeEnv = 'development',
+  isPreview = false,
 ): Promise<ResolvedConfig> {
   let config = inlineConfig
   let configFileDependencies: string[] = []
@@ -414,10 +463,11 @@ export async function resolveConfig(
     process.env.NODE_ENV = defaultNodeEnv
   }
 
-  const configEnv = {
+  const configEnv: ConfigEnv = {
     mode,
     command,
-    ssrBuild: !!config.build?.ssr,
+    isSsrBuild: command === 'build' && !!config.build?.ssr,
+    isPreview,
   }
 
   let { configFile } = config
@@ -427,6 +477,7 @@ export async function resolveConfig(
       configFile,
       config.root,
       config.logLevel,
+      config.customLogger,
     )
     if (loadResult) {
       config = mergeConfig(loadResult.config, config)
@@ -463,54 +514,18 @@ export async function resolveConfig(
   const userPlugins = [...prePlugins, ...normalPlugins, ...postPlugins]
   config = await runConfigHook(config, userPlugins, configEnv)
 
-  // If there are custom commonjsOptions, don't force optimized deps for this test
-  // even if the env var is set as it would interfere with the playground specs.
-  if (
-    !config.build?.commonjsOptions &&
-    process.env.VITE_TEST_WITHOUT_PLUGIN_COMMONJS
-  ) {
-    config = mergeConfig(config, {
-      optimizeDeps: { disabled: false },
-      ssr: { optimizeDeps: { disabled: false } },
-    })
-    config.build ??= {}
-    config.build.commonjsOptions = { include: [] }
-  }
-
   // Define logger
   const logger = createLogger(config.logLevel, {
     allowClearScreen: config.clearScreen,
     customLogger: config.customLogger,
   })
 
-  let foundDiscouragedVariableName
-  if (
-    (foundDiscouragedVariableName = Object.keys(config.define ?? {}).find((k) =>
-      ['process', 'global'].includes(k),
-    ))
-  ) {
-    logger.warn(
-      colors.yellow(
-        `Replacing ${colors.bold(
-          foundDiscouragedVariableName,
-        )} using the define option is discouraged. See https://vitejs.dev/config/shared-options.html#define for more details.`,
-      ),
-    )
-  }
-
   // resolve root
   const resolvedRoot = normalizePath(
     config.root ? path.resolve(config.root) : process.cwd(),
   )
-  if (resolvedRoot.includes('#')) {
-    logger.warn(
-      colors.yellow(
-        `The project root contains the "#" character (${colors.cyan(
-          resolvedRoot,
-        )}), which may not work when running Vite. Consider renaming the directory to remove the "#".`,
-      ),
-    )
-  }
+
+  checkBadCharactersInPath(resolvedRoot, logger)
 
   const clientAlias = [
     {
@@ -530,12 +545,25 @@ export async function resolveConfig(
 
   const resolveOptions: ResolvedConfig['resolve'] = {
     mainFields: config.resolve?.mainFields ?? DEFAULT_MAIN_FIELDS,
-    browserField: config.resolve?.browserField ?? true,
     conditions: config.resolve?.conditions ?? [],
     extensions: config.resolve?.extensions ?? DEFAULT_EXTENSIONS,
     dedupe: config.resolve?.dedupe ?? [],
     preserveSymlinks: config.resolve?.preserveSymlinks ?? false,
     alias: resolvedAlias,
+  }
+
+  if (
+    // @ts-expect-error removed field
+    config.resolve?.browserField === false &&
+    resolveOptions.mainFields.includes('browser')
+  ) {
+    logger.warn(
+      colors.yellow(
+        `\`resolve.browserField\` is set to false, but the option is removed in favour of ` +
+          `the 'browser' string in \`resolve.mainFields\`. You may want to update \`resolve.mainFields\` ` +
+          `to remove the 'browser' string and preserve the previous browser behaviour.`,
+      ),
+    )
   }
 
   // load .env files
@@ -590,8 +618,8 @@ export async function resolveConfig(
     config.cacheDir
       ? path.resolve(resolvedRoot, config.cacheDir)
       : pkgDir
-      ? path.join(pkgDir, `node_modules/.vite`)
-      : path.join(resolvedRoot, `.vite`),
+        ? path.join(pkgDir, `node_modules/.vite`)
+        : path.join(resolvedRoot, `.vite`),
   )
 
   const assetsFilter =
@@ -632,6 +660,7 @@ export async function resolveConfig(
                 tryIndex: true,
                 ...options,
                 idOnly: true,
+                fsUtils: getFsUtils(resolved),
               }),
             ],
           }))
@@ -648,16 +677,16 @@ export async function resolveConfig(
   const { publicDir } = config
   const resolvedPublicDir =
     publicDir !== false && publicDir !== ''
-      ? path.resolve(
-          resolvedRoot,
-          typeof publicDir === 'string' ? publicDir : 'public',
+      ? normalizePath(
+          path.resolve(
+            resolvedRoot,
+            typeof publicDir === 'string' ? publicDir : 'public',
+          ),
         )
       : ''
 
   const server = resolveServerOptions(resolvedRoot, config.server, logger)
   const ssr = resolveSSROptions(config.ssr, resolveOptions.preserveSymlinks)
-
-  const middlewareMode = config?.server?.middlewareMode
 
   const optimizeDeps = config.optimizeDeps || {}
 
@@ -678,7 +707,7 @@ export async function resolveConfig(
     )
   }
 
-  const createWorkerPlugins = async function () {
+  const createWorkerPlugins = async function (bundleChain: string[]) {
     // Some plugins that aren't intended to work in the bundling of workers (doing post-processing at build time for example).
     // And Plugins may also have cached that could be corrupted by being used in these extra rollup calls.
     // So we need to separate the worker plugin from the plugin that vite needs to run.
@@ -708,6 +737,7 @@ export async function resolveConfig(
       ...resolved,
       isWorker: true,
       mainConfig: resolved,
+      bundleChain,
     }
     const resolvedWorkerPlugins = await resolvePlugins(
       workerResolved,
@@ -717,9 +747,11 @@ export async function resolveConfig(
     )
 
     // run configResolved hooks
-    createPluginHookUtils(resolvedWorkerPlugins)
-      .getSortedPluginHooks('configResolved')
-      .map((hook) => hook(workerResolved))
+    await Promise.all(
+      createPluginHookUtils(resolvedWorkerPlugins)
+        .getSortedPluginHooks('configResolved')
+        .map((hook) => hook(workerResolved)),
+    )
 
     return resolvedWorkerPlugins
   }
@@ -747,6 +779,7 @@ export async function resolveConfig(
     ssr,
     isWorker: false,
     mainConfig: null,
+    bundleChain: [],
     isProduction,
     plugins: userPlugins,
     css: resolveCSSOptions(config.css),
@@ -775,7 +808,7 @@ export async function resolveConfig(
     packageCache,
     createResolver,
     optimizeDeps: {
-      disabled: 'build',
+      holdUntilCrawlEnd: true,
       ...optimizeDeps,
       esbuildOptions: {
         preserveSymlinks: resolveOptions.preserveSymlinks,
@@ -783,7 +816,7 @@ export async function resolveConfig(
       },
     },
     worker: resolvedWorkerOptions,
-    appType: config.appType ?? (middlewareMode === 'ssr' ? 'custom' : 'spa'),
+    appType: config.appType ?? 'spa',
     experimental: {
       importGlobRestoreExtension: false,
       hmrPartialAccept: false,
@@ -811,23 +844,12 @@ export async function resolveConfig(
       .map((hook) => hook(resolved)),
   )
 
-  // validate config
-
-  if (middlewareMode === 'ssr') {
-    logger.warn(
-      colors.yellow(
-        `Setting server.middlewareMode to 'ssr' is deprecated, set server.middlewareMode to \`true\`${
-          config.appType === 'custom' ? '' : ` and appType to 'custom'`
-        } instead`,
-      ),
-    )
-  } else if (middlewareMode === 'html') {
-    logger.warn(
-      colors.yellow(
-        `Setting server.middlewareMode to 'html' is deprecated, set server.middlewareMode to \`true\` instead`,
-      ),
-    )
-  }
+  optimizeDepsDisabledBackwardCompatibility(resolved, resolved.optimizeDeps)
+  optimizeDepsDisabledBackwardCompatibility(
+    resolved,
+    resolved.ssr.optimizeDeps,
+    'ssr.',
+  )
 
   debug?.(`using resolved config: %O`, {
     ...resolved,
@@ -838,7 +860,13 @@ export async function resolveConfig(
     },
   })
 
-  if (config.build?.terserOptions && config.build.minify !== 'terser') {
+  // validate config
+
+  if (
+    config.build?.terserOptions &&
+    config.build.minify &&
+    config.build.minify !== 'terser'
+  ) {
     logger.warn(
       colors.yellow(
         `build.terserOptions is specified but build.minify is not set to use Terser. ` +
@@ -956,6 +984,7 @@ export async function loadConfigFromFile(
   configFile?: string,
   configRoot: string = process.cwd(),
   logLevel?: LogLevel,
+  customLogger?: Logger,
 ): Promise<{
   path: string
   config: UserConfig
@@ -1009,9 +1038,11 @@ export async function loadConfigFromFile(
       dependencies: bundled.dependencies,
     }
   } catch (e) {
-    createLogger(logLevel).error(
+    createLogger(logLevel, { customLogger }).error(
       colors.red(`failed to load config from ${resolvedPath}`),
-      { error: e },
+      {
+        error: e,
+      },
     )
     throw e
   }
@@ -1039,6 +1070,8 @@ async function bundleConfigFile(
       __dirname: dirnameVarName,
       __filename: filenameVarName,
       'import.meta.url': importMetaUrlVarName,
+      'import.meta.dirname': dirnameVarName,
+      'import.meta.filename': filenameVarName,
     },
     plugins: [
       {
@@ -1060,7 +1093,6 @@ async function bundleConfigFile(
                 preferRelative: false,
                 tryIndex: true,
                 mainFields: [],
-                browserField: false,
                 conditions: [],
                 overrideConditions: ['node'],
                 dedupe: [],
@@ -1110,7 +1142,7 @@ async function bundleConfigFile(
                     throw new Error(
                       `Failed to resolve ${JSON.stringify(
                         id,
-                      )}. This package is ESM only but it was tried to load by \`require\`. See http://vitejs.dev/guide/troubleshooting.html#this-package-is-esm-only for more details.`,
+                      )}. This package is ESM only but it was tried to load by \`require\`. See https://vitejs.dev/guide/troubleshooting.html#this-package-is-esm-only for more details.`,
                     )
                   }
                 }
@@ -1127,7 +1159,7 @@ async function bundleConfigFile(
                 throw new Error(
                   `${JSON.stringify(
                     id,
-                  )} resolved to an ESM file. ESM file cannot be loaded by \`require\`. See http://vitejs.dev/guide/troubleshooting.html#this-package-is-esm-only for more details.`,
+                  )} resolved to an ESM file. ESM file cannot be loaded by \`require\`. See https://vitejs.dev/guide/troubleshooting.html#this-package-is-esm-only for more details.`,
                 )
               }
               return {
@@ -1142,7 +1174,7 @@ async function bundleConfigFile(
         name: 'inject-file-scope-variables',
         setup(build) {
           build.onLoad({ filter: /\.[cm]?[jt]s$/ }, async (args) => {
-            const contents = await fsp.readFile(args.path, 'utf8')
+            const contents = await fsp.readFile(args.path, 'utf-8')
             const injectValues =
               `const ${dirnameVarName} = ${JSON.stringify(
                 path.dirname(args.path),
@@ -1228,7 +1260,7 @@ async function runConfigHook(
 
   for (const p of getSortedPluginsByHook('config', plugins)) {
     const hook = p.config
-    const handler = hook && 'handler' in hook ? hook.handler : hook
+    const handler = getHookHandler(hook)
     if (handler) {
       const res = await handler(conf, configEnv)
       if (res) {
@@ -1250,11 +1282,48 @@ export function isDepsOptimizerEnabled(
   config: ResolvedConfig,
   ssr: boolean,
 ): boolean {
-  const { command } = config
-  const { disabled } = getDepOptimizationConfig(config, ssr)
-  return !(
-    disabled === true ||
-    (command === 'build' && disabled === 'build') ||
-    (command === 'serve' && disabled === 'dev')
-  )
+  const optimizeDeps = getDepOptimizationConfig(config, ssr)
+  return !(optimizeDeps.noDiscovery && !optimizeDeps.include?.length)
+}
+
+function optimizeDepsDisabledBackwardCompatibility(
+  resolved: ResolvedConfig,
+  optimizeDeps: DepOptimizationConfig,
+  optimizeDepsPath: string = '',
+) {
+  const optimizeDepsDisabled = optimizeDeps.disabled
+  if (optimizeDepsDisabled !== undefined) {
+    if (optimizeDepsDisabled === true || optimizeDepsDisabled === 'dev') {
+      const commonjsOptionsInclude = resolved.build?.commonjsOptions?.include
+      const commonjsPluginDisabled =
+        Array.isArray(commonjsOptionsInclude) &&
+        commonjsOptionsInclude.length === 0
+      optimizeDeps.noDiscovery = true
+      optimizeDeps.include = undefined
+      if (commonjsPluginDisabled) {
+        resolved.build.commonjsOptions.include = undefined
+      }
+      resolved.logger.warn(
+        colors.yellow(`(!) Experimental ${optimizeDepsPath}optimizeDeps.disabled and deps pre-bundling during build were removed in Vite 5.1.
+    To disable the deps optimizer, set ${optimizeDepsPath}optimizeDeps.noDiscovery to true and ${optimizeDepsPath}optimizeDeps.include as undefined or empty.
+    Please remove ${optimizeDepsPath}optimizeDeps.disabled from your config.
+    ${
+      commonjsPluginDisabled
+        ? 'Empty config.build.commonjsOptions.include will be ignored to support CJS during build. This config should also be removed.'
+        : ''
+    }
+  `),
+      )
+    } else if (
+      optimizeDepsDisabled === false ||
+      optimizeDepsDisabled === 'build'
+    ) {
+      resolved.logger.warn(
+        colors.yellow(`(!) Experimental ${optimizeDepsPath}optimizeDeps.disabled and deps pre-bundling during build were removed in Vite 5.1.
+    Setting it to ${optimizeDepsDisabled} now has no effect.
+    Please remove ${optimizeDepsPath}optimizeDeps.disabled from your config.
+  `),
+      )
+    }
+  }
 }

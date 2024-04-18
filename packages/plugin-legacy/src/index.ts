@@ -119,9 +119,13 @@ const legacyEnvVarMarker = `__VITE_IS_LEGACY__`
 
 const _require = createRequire(import.meta.url)
 
+const nonLeadingHashInFileNameRE = /[^/]+\[hash(?::\d+)?\]/
+const prefixedHashInFileNameRE = /\W?\[hash(:\d+)?\]/
+
 function viteLegacyPlugin(options: Options = {}): Plugin[] {
   let config: ResolvedConfig
   let targets: Options['targets']
+  let modernTargets: Options['modernTargets']
 
   // browsers supporting ESM + dynamic import + import.meta + async generator
   const modernTargetsEsbuild = [
@@ -135,7 +139,7 @@ function viteLegacyPlugin(options: Options = {}): Plugin[] {
   // es2020 = chrome 80+, safari 13.1+, firefox 72+, edge 80+
   // https://github.com/evanw/esbuild/issues/121#issuecomment-646956379
   const modernTargetsBabel =
-    'edge>=80, firefox>=72, chrome>=80, safari>=13.1, chromeAndroid>=80, iOS>=13.1'
+    'edge>=79, firefox>=67, chrome>=64, safari>=12, chromeAndroid>=64, iOS>=12'
 
   const genLegacy = options.renderLegacyChunks !== false
   const genModern = options.renderModernChunks !== false
@@ -180,10 +184,11 @@ function viteLegacyPlugin(options: Options = {}): Plugin[] {
   }
 
   let overriddenBuildTarget = false
+  let overriddenDefaultModernTargets = false
   const legacyConfigPlugin: Plugin = {
     name: 'vite:legacy-config',
 
-    config(config, env) {
+    async config(config, env) {
       if (env.command === 'build' && !config.build?.ssr) {
         if (!config.build) {
           config.build = {}
@@ -202,7 +207,17 @@ function viteLegacyPlugin(options: Options = {}): Plugin[] {
           // Vite's default target browsers are **not** the same.
           // See https://github.com/vitejs/vite/pull/10052#issuecomment-1242076461
           overriddenBuildTarget = config.build.target !== undefined
-          config.build.target = modernTargetsEsbuild
+          overriddenDefaultModernTargets = options.modernTargets !== undefined
+
+          if (options.modernTargets) {
+            // Package is ESM only
+            const { default: browserslistToEsbuild } = await import(
+              'browserslist-to-esbuild'
+            )
+            config.build.target = browserslistToEsbuild(options.modernTargets)
+          } else {
+            config.build.target = modernTargetsEsbuild
+          }
         }
       }
 
@@ -220,6 +235,13 @@ function viteLegacyPlugin(options: Options = {}): Plugin[] {
         config.logger.warn(
           colors.yellow(
             `plugin-legacy overrode 'build.target'. You should pass 'targets' as an option to this plugin with the list of legacy browsers to support instead.`,
+          ),
+        )
+      }
+      if (overriddenDefaultModernTargets) {
+        config.logger.warn(
+          colors.yellow(
+            `plugin-legacy 'modernTargets' option overrode the builtin targets of modern chunks. Some versions of browsers between legacy and modern may not be supported.`,
           ),
         )
       }
@@ -309,6 +331,10 @@ function viteLegacyPlugin(options: Options = {}): Plugin[] {
       }
       config = _config
 
+      modernTargets = options.modernTargets || modernTargetsBabel
+      isDebug &&
+        console.log(`[@vitejs/plugin-legacy] modernTargets:`, modernTargets)
+
       if (!genLegacy || config.build.ssr) {
         return
       }
@@ -337,14 +363,16 @@ function viteLegacyPlugin(options: Options = {}): Plugin[] {
           if (fileName.includes('[name]')) {
             // [name]-[hash].[format] -> [name]-legacy-[hash].[format]
             fileName = fileName.replace('[name]', '[name]-legacy')
-          } else if (fileName.includes('[hash]')) {
+          } else if (nonLeadingHashInFileNameRE.test(fileName)) {
             // custom[hash].[format] -> [name]-legacy[hash].[format]
             // custom-[hash].[format] -> [name]-legacy-[hash].[format]
             // custom.[hash].[format] -> [name]-legacy.[hash].[format]
-            fileName = fileName.replace(/[.-]?\[hash\]/, '-legacy$&')
+            // custom.[hash:10].[format] -> custom-legacy.[hash:10].[format]
+            fileName = fileName.replace(prefixedHashInFileNameRE, '-legacy$&')
           } else {
             // entry.js -> entry-legacy.js
-            fileName = fileName.replace(/(.+)\.(.+)/, '$1-legacy.$2')
+            // entry.min.js -> entry-legacy.min.js
+            fileName = fileName.replace(/(.+?)\.(.+)/, '$1-legacy.$2')
           }
 
           return fileName
@@ -389,7 +417,7 @@ function viteLegacyPlugin(options: Options = {}): Plugin[] {
           genModern
         ) {
           // analyze and record modern polyfills
-          await detectPolyfills(raw, modernTargetsBabel, modernPolyfills)
+          await detectPolyfills(raw, modernTargets, modernPolyfills)
         }
 
         const ms = new MagicString(raw)
@@ -842,5 +870,7 @@ export const cspHashes = [
   detectModernBrowserCode,
   dynamicFallbackInlineCode,
 ].map((i) => createHash('sha256').update(i).digest('base64'))
+
+export type { Options }
 
 export default viteLegacyPlugin

@@ -5,7 +5,6 @@ import { performance } from 'node:perf_hooks'
 import glob from 'fast-glob'
 import type {
   BuildContext,
-  BuildOptions,
   Loader,
   OnLoadArgs,
   OnLoadResult,
@@ -21,7 +20,7 @@ import {
   SPECIAL_QUERY_RE,
 } from '../constants'
 import {
-  cleanUrl,
+  arraify,
   createDebugger,
   dataUrlRE,
   externalRE,
@@ -38,6 +37,8 @@ import {
 import type { PluginContainer } from '../server/pluginContainer'
 import { createPluginContainer } from '../server/pluginContainer'
 import { transformGlobImport } from '../plugins/importMetaGlob'
+import { cleanUrl } from '../../shared/utils'
+import { loadTsconfigJsonForFile } from '../plugins/esbuild'
 
 type ResolveIdOptions = Parameters<PluginContainer['resolveId']>[2]
 
@@ -214,12 +215,23 @@ async function prepareEsbuildScanner(
 
   const plugin = esbuildScanPlugin(config, container, deps, missing, entries)
 
-  const {
-    plugins = [],
-    tsconfig,
-    tsconfigRaw,
-    ...esbuildOptions
-  } = config.optimizeDeps?.esbuildOptions ?? {}
+  const { plugins = [], ...esbuildOptions } =
+    config.optimizeDeps?.esbuildOptions ?? {}
+
+  // The plugin pipeline automatically loads the closest tsconfig.json.
+  // But esbuild doesn't support reading tsconfig.json if the plugin has resolved the path (https://github.com/evanw/esbuild/issues/2265).
+  // Due to syntax incompatibilities between the experimental decorators in TypeScript and TC39 decorators,
+  // we cannot simply set `"experimentalDecorators": true` or `false`. (https://github.com/vitejs/vite/pull/15206#discussion_r1417414715)
+  // Therefore, we use the closest tsconfig.json from the root to make it work in most cases.
+  let tsconfigRaw = esbuildOptions.tsconfigRaw
+  if (!tsconfigRaw && !esbuildOptions.tsconfig) {
+    const tsconfigResult = await loadTsconfigJsonForFile(
+      path.join(config.root, '_dummy.js'),
+    )
+    if (tsconfigResult.compilerOptions?.experimentalDecorators) {
+      tsconfigRaw = { compilerOptions: { experimentalDecorators: true } }
+    }
+  }
 
   return await esbuild.context({
     absWorkingDir: process.cwd(),
@@ -232,9 +244,8 @@ async function prepareEsbuildScanner(
     format: 'esm',
     logLevel: 'silent',
     plugins: [...plugins, plugin],
-    tsconfig,
-    tsconfigRaw: resolveTsconfigRaw(tsconfig, tsconfigRaw),
     ...esbuildOptions,
+    tsconfigRaw,
   })
 }
 
@@ -246,6 +257,12 @@ function orderedDependencies(deps: Record<string, string>) {
 }
 
 function globEntries(pattern: string | string[], config: ResolvedConfig) {
+  const resolvedPatterns = arraify(pattern)
+  if (resolvedPatterns.every((str) => !glob.isDynamicPattern(str))) {
+    return resolvedPatterns.map((p) =>
+      normalizePath(path.resolve(config.root, p)),
+    )
+  }
   return glob(pattern, {
     cwd: config.root,
     ignore: [
@@ -307,9 +324,11 @@ function esbuildScanPlugin(
     '@vite/env',
   ]
 
+  const isUnlessEntry = (path: string) => !entries.includes(path)
+
   const externalUnlessEntry = ({ path }: { path: string }) => ({
     path,
-    external: !entries.includes(path),
+    external: isUnlessEntry(path),
   })
 
   const doTransformGlobImport = async (
@@ -390,12 +409,10 @@ function esbuildScanPlugin(
         // Avoid matching the content of the comment
         raw = raw.replace(commentRE, '<!---->')
         const isHtml = p.endsWith('.html')
-        scriptRE.lastIndex = 0
         let js = ''
         let scriptId = 0
-        let match: RegExpExecArray | null
-        while ((match = scriptRE.exec(raw))) {
-          const [, openTag, content] = match
+        const matches = raw.matchAll(scriptRE)
+        for (const [, openTag, content] of matches) {
           const typeMatch = openTag.match(typeRE)
           const type =
             typeMatch && (typeMatch[1] || typeMatch[2] || typeMatch[3])
@@ -555,26 +572,29 @@ function esbuildScanPlugin(
       // should be faster than doing it in the catch-all via js
       // they are done after the bare import resolve because a package name
       // may end with these extensions
+      const setupExternalize = (
+        filter: RegExp,
+        doExternalize: (path: string) => boolean,
+      ) => {
+        build.onResolve({ filter }, ({ path }) => {
+          return {
+            path,
+            external: doExternalize(path),
+          }
+        })
+      }
 
       // css
-      build.onResolve({ filter: CSS_LANGS_RE }, externalUnlessEntry)
-
+      setupExternalize(CSS_LANGS_RE, isUnlessEntry)
       // json & wasm
-      build.onResolve({ filter: /\.(json|json5|wasm)$/ }, externalUnlessEntry)
-
+      setupExternalize(/\.(json|json5|wasm)$/, isUnlessEntry)
       // known asset types
-      build.onResolve(
-        {
-          filter: new RegExp(`\\.(${KNOWN_ASSET_TYPES.join('|')})$`),
-        },
-        externalUnlessEntry,
+      setupExternalize(
+        new RegExp(`\\.(${KNOWN_ASSET_TYPES.join('|')})$`),
+        isUnlessEntry,
       )
-
       // known vite query types: ?worker, ?raw
-      build.onResolve({ filter: SPECIAL_QUERY_RE }, ({ path }) => ({
-        path,
-        external: true,
-      }))
+      setupExternalize(SPECIAL_QUERY_RE, () => true)
 
       // catch all -------------------------------------------------------------
 
@@ -638,6 +658,16 @@ function esbuildScanPlugin(
           contents,
         }
       })
+
+      // onResolve is not called for glob imports.
+      // we need to add that here as well until esbuild calls onResolve for glob imports.
+      // https://github.com/evanw/esbuild/issues/3317
+      build.onLoad({ filter: /.*/, namespace: 'file' }, () => {
+        return {
+          loader: 'js',
+          contents: 'export default {}',
+        }
+      })
     },
   }
 }
@@ -683,23 +713,4 @@ function isScannable(id: string, extensions: string[] | undefined): boolean {
     extensions?.includes(path.extname(id)) ||
     false
   )
-}
-
-// esbuild v0.18 only transforms decorators when `experimentalDecorators` is set to `true`.
-// To preserve compat with the esbuild breaking change, we set `experimentalDecorators` to
-// `true` by default if it's unset.
-// TODO: Remove this in Vite 5 and check https://github.com/vitejs/vite/pull/13805#issuecomment-1633612320
-export function resolveTsconfigRaw(
-  tsconfig: string | undefined,
-  tsconfigRaw: BuildOptions['tsconfigRaw'],
-): BuildOptions['tsconfigRaw'] {
-  return tsconfig || typeof tsconfigRaw === 'string'
-    ? tsconfigRaw
-    : {
-        ...tsconfigRaw,
-        compilerOptions: {
-          experimentalDecorators: true,
-          ...tsconfigRaw?.compilerOptions,
-        },
-      }
 }

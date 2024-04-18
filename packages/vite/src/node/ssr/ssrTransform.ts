@@ -12,10 +12,11 @@ import type {
 import { extract_names as extractNames } from 'periscopic'
 import { walk as eswalk } from 'estree-walker'
 import type { RawSourceMap } from '@ampproject/remapping'
-import { parseAst as rollupParseAst } from 'rollup/parseAst'
+import { parseAstAsync as rollupParseAstAsync } from 'rollup/parseAst'
 import type { TransformResult } from '../server/transformRequest'
-import { combineSourcemaps } from '../utils'
+import { combineSourcemaps, isDefined } from '../utils'
 import { isJSONRequest } from '../plugins/json'
+import type { DefineImportMetadata } from '../../shared/ssrTransform'
 
 type Node = _Node & {
   start: number
@@ -26,10 +27,6 @@ interface TransformOptions {
   json?: {
     stringify?: boolean
   }
-}
-
-interface DefineImportMetadata {
-  namedImportSpecifiers?: string[]
 }
 
 export const ssrModuleExportsKey = `__vite_ssr_exports__`
@@ -75,7 +72,7 @@ async function ssrTransformScript(
 
   let ast: any
   try {
-    ast = rollupParseAst(code)
+    ast = await rollupParseAstAsync(code)
   } catch (err) {
     if (!err.loc || !err.loc.line) throw err
     const line = err.loc.line
@@ -97,15 +94,18 @@ async function ssrTransformScript(
   // hoist at the start of the file, after the hashbang
   const hoistIndex = code.match(hashbangRE)?.[0].length ?? 0
 
-  function defineImport(source: string, metadata?: DefineImportMetadata) {
+  function defineImport(
+    index: number,
+    source: string,
+    metadata?: DefineImportMetadata,
+  ) {
     deps.add(source)
     const importId = `__vite_ssr_import_${uid++}__`
 
     // Reduce metadata to undefined if it's all default values
     if (
       metadata &&
-      (metadata.namedImportSpecifiers == null ||
-        metadata.namedImportSpecifiers.length === 0)
+      (metadata.importedNames == null || metadata.importedNames.length === 0)
     ) {
       metadata = undefined
     }
@@ -114,7 +114,7 @@ async function ssrTransformScript(
     // There will be an error if the module is called before it is imported,
     // so the module import statement is hoisted to the top
     s.appendLeft(
-      hoistIndex,
+      index,
       `const ${importId} = await ${ssrImportKey}(${JSON.stringify(
         source,
       )}${metadataStr});\n`,
@@ -136,10 +136,13 @@ async function ssrTransformScript(
     // import { baz } from 'foo' --> baz -> __import_foo__.baz
     // import * as ok from 'foo' --> ok -> __import_foo__
     if (node.type === 'ImportDeclaration') {
-      const importId = defineImport(node.source.value as string, {
-        namedImportSpecifiers: node.specifiers
-          .map((s) => s.type === 'ImportSpecifier' && s.imported.name)
-          .filter(Boolean) as string[],
+      const importId = defineImport(hoistIndex, node.source.value as string, {
+        importedNames: node.specifiers
+          .map((s) => {
+            if (s.type === 'ImportSpecifier') return s.imported.name
+            else if (s.type === 'ImportDefaultSpecifier') return 'default'
+          })
+          .filter(isDefined),
       })
       s.remove(node.start, node.end)
       for (const spec of node.specifiers) {
@@ -183,13 +186,16 @@ async function ssrTransformScript(
         s.remove(node.start, node.end)
         if (node.source) {
           // export { foo, bar } from './foo'
-          const importId = defineImport(node.source.value as string, {
-            namedImportSpecifiers: node.specifiers.map((s) => s.local.name),
-          })
-          // hoist re-exports near the defined import so they are immediately exported
+          const importId = defineImport(
+            node.start,
+            node.source.value as string,
+            {
+              importedNames: node.specifiers.map((s) => s.local.name),
+            },
+          )
           for (const spec of node.specifiers) {
             defineExport(
-              hoistIndex,
+              node.start,
               spec.exported.name,
               `${importId}.${spec.local.name}`,
             )
@@ -235,12 +241,11 @@ async function ssrTransformScript(
     // export * from './foo'
     if (node.type === 'ExportAllDeclaration') {
       s.remove(node.start, node.end)
-      const importId = defineImport(node.source.value as string)
-      // hoist re-exports near the defined import so they are immediately exported
+      const importId = defineImport(node.start, node.source.value as string)
       if (node.exported) {
-        defineExport(hoistIndex, node.exported.name, `${importId}`)
+        defineExport(node.start, node.exported.name, `${importId}`)
       } else {
-        s.appendLeft(hoistIndex, `${ssrExportAllKey}(${importId});\n`)
+        s.appendLeft(node.start, `${ssrExportAllKey}(${importId});\n`)
       }
     }
   }
