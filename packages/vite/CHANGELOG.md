@@ -1,3 +1,30 @@
+## <small>5.2.11 (2024-05-02)</small>
+
+* feat: improve dynamic import variable failure error message (#16519) ([f8feeea](https://github.com/vitejs/vite/commit/f8feeea)), closes [#16519](https://github.com/vitejs/vite/issues/16519)
+* fix: dynamic-import-vars plugin normalize path issue (#16518) ([f71ba5b](https://github.com/vitejs/vite/commit/f71ba5b)), closes [#16518](https://github.com/vitejs/vite/issues/16518)
+* fix: scripts and styles were missing from built HTML on Windows (#16421) ([0e93f58](https://github.com/vitejs/vite/commit/0e93f58)), closes [#16421](https://github.com/vitejs/vite/issues/16421)
+* fix(deps): update all non-major dependencies (#16488) ([2d50be2](https://github.com/vitejs/vite/commit/2d50be2)), closes [#16488](https://github.com/vitejs/vite/issues/16488)
+* fix(deps): update all non-major dependencies (#16549) ([2d6a13b](https://github.com/vitejs/vite/commit/2d6a13b)), closes [#16549](https://github.com/vitejs/vite/issues/16549)
+* fix(dev): watch publicDir explicitly to include it outside the root (#16502) ([4d83eb5](https://github.com/vitejs/vite/commit/4d83eb5)), closes [#16502](https://github.com/vitejs/vite/issues/16502)
+* fix(preload): skip preload for non-static urls (#16556) ([bb79c9b](https://github.com/vitejs/vite/commit/bb79c9b)), closes [#16556](https://github.com/vitejs/vite/issues/16556)
+* fix(ssr): handle class declaration and expression name scoping (#16569) ([c071eb3](https://github.com/vitejs/vite/commit/c071eb3)), closes [#16569](https://github.com/vitejs/vite/issues/16569)
+* fix(ssr): handle function expression name scoping (#16563) ([02db947](https://github.com/vitejs/vite/commit/02db947)), closes [#16563](https://github.com/vitejs/vite/issues/16563)
+
+
+
+## <small>5.2.10 (2024-04-20)</small>
+
+* revert: perf: use workspace root for fs cache (#15712) (#16476) ([77e7359](https://github.com/vitejs/vite/commit/77e7359)), closes [#15712](https://github.com/vitejs/vite/issues/15712) [#16476](https://github.com/vitejs/vite/issues/16476)
+* fix: add base to virtual html (#16442) ([721f94d](https://github.com/vitejs/vite/commit/721f94d)), closes [#16442](https://github.com/vitejs/vite/issues/16442)
+* fix: adjust esm syntax judgment logic (#16436) ([af72eab](https://github.com/vitejs/vite/commit/af72eab)), closes [#16436](https://github.com/vitejs/vite/issues/16436)
+* fix: don't add outDirs to watch.ignored if emptyOutDir is false (#16453) ([6a127d6](https://github.com/vitejs/vite/commit/6a127d6)), closes [#16453](https://github.com/vitejs/vite/issues/16453)
+* fix(cspNonce): don't overwrite existing nonce values (#16415) ([b872635](https://github.com/vitejs/vite/commit/b872635)), closes [#16415](https://github.com/vitejs/vite/issues/16415)
+* feat: show warning if root is in build.outDir (#16454) ([11444dc](https://github.com/vitejs/vite/commit/11444dc)), closes [#16454](https://github.com/vitejs/vite/issues/16454)
+* feat: write cspNonce to style tags (#16419) ([8e54bbd](https://github.com/vitejs/vite/commit/8e54bbd)), closes [#16419](https://github.com/vitejs/vite/issues/16419)
+* chore(deps): update dependency eslint-plugin-n to v17 (#16381) ([6cccef7](https://github.com/vitejs/vite/commit/6cccef7)), closes [#16381](https://github.com/vitejs/vite/issues/16381)
+
+
+
 ## <small>5.2.9 (2024-04-15)</small>
 
 * fix: `fsp.rm` removing files does not take effect (#16032) ([b05c405](https://github.com/vitejs/vite/commit/b05c405)), closes [#16032](https://github.com/vitejs/vite/issues/16032)
