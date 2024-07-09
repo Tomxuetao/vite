@@ -1,0 +1,215 @@
+import { posix } from 'node:path'
+import MagicString from 'magic-string'
+import { init, parse as parseImports } from 'es-module-lexer'
+import { parseAst } from 'rollup/parseAst'
+import { dynamicImportToGlob } from '@rollup/plugin-dynamic-import-vars'
+import { CLIENT_ENTRY } from '../constants'
+import {
+  createFilter,
+  normalizePath,
+  rawRE,
+  requestQueryMaybeEscapedSplitRE,
+  requestQuerySplitRE,
+  transformStableResult,
+  urlRE,
+} from '../utils'
+import { toAbsoluteGlob } from './importMetaGlob'
+import { hasViteIgnoreRE } from './importAnalysis'
+import { workerOrSharedWorkerRE } from './worker'
+export const dynamicImportHelperId = '\0vite/dynamic-import-helper.js'
+const relativePathRE = /^\.{1,2}\//
+// fast path to check if source contains a dynamic import. we check for a
+// trailing slash too as a dynamic import statement can have comments between
+// the `import` and the `(`.
+const hasDynamicImportRE = /\bimport\s*[(/]/
+const dynamicImportHelper = (glob, path, segs) => {
+  const v = glob[path]
+  if (v) {
+    return typeof v === 'function' ? v() : Promise.resolve(v)
+  }
+  return new Promise((_, reject) => {
+    ;(typeof queueMicrotask === 'function' ? queueMicrotask : setTimeout)(
+      reject.bind(
+        null,
+        new Error(
+          'Unknown variable dynamic import: ' +
+            path +
+            (path.split('/').length !== segs
+              ? '. Note that variables only represent file names one level deep.'
+              : ''),
+        ),
+      ),
+    )
+  })
+}
+function parseDynamicImportPattern(strings) {
+  const filename = strings.slice(1, -1)
+  const ast = parseAst(strings).body[0].expression
+  const userPatternQuery = dynamicImportToGlob(ast, filename)
+  if (!userPatternQuery) {
+    return null
+  }
+  const [userPattern] = userPatternQuery.split(
+    // ? is escaped on posix OS
+    requestQueryMaybeEscapedSplitRE,
+    2,
+  )
+  let [rawPattern, search] = filename.split(requestQuerySplitRE, 2)
+  let globParams = null
+  if (search) {
+    search = '?' + search
+    if (
+      workerOrSharedWorkerRE.test(search) ||
+      urlRE.test(search) ||
+      rawRE.test(search)
+    ) {
+      globParams = {
+        query: search,
+        import: '*',
+      }
+    } else {
+      globParams = {
+        query: search,
+      }
+    }
+  }
+  return {
+    globParams,
+    userPattern,
+    rawPattern,
+  }
+}
+export async function transformDynamicImport(
+  importSource,
+  importer,
+  resolve,
+  root,
+) {
+  if (importSource[1] !== '.' && importSource[1] !== '/') {
+    const resolvedFileName = await resolve(importSource.slice(1, -1), importer)
+    if (!resolvedFileName) {
+      return null
+    }
+    const relativeFileName = normalizePath(
+      posix.relative(
+        posix.dirname(normalizePath(importer)),
+        normalizePath(resolvedFileName),
+      ),
+    )
+    importSource =
+      '`' + (relativeFileName[0] === '.' ? '' : './') + relativeFileName + '`'
+  }
+  const dynamicImportPattern = parseDynamicImportPattern(importSource)
+  if (!dynamicImportPattern) {
+    return null
+  }
+  const { globParams, rawPattern, userPattern } = dynamicImportPattern
+  const params = globParams ? `, ${JSON.stringify(globParams)}` : ''
+  let newRawPattern = posix.relative(
+    posix.dirname(importer),
+    await toAbsoluteGlob(rawPattern, root, importer, resolve),
+  )
+  if (!relativePathRE.test(newRawPattern)) {
+    newRawPattern = `./${newRawPattern}`
+  }
+  const exp = `(import.meta.glob(${JSON.stringify(userPattern)}${params}))`
+  return {
+    rawPattern: newRawPattern,
+    pattern: userPattern,
+    glob: exp,
+  }
+}
+export function dynamicImportVarsPlugin(config) {
+  const resolve = config.createResolver({
+    preferRelative: true,
+    tryIndex: false,
+    extensions: [],
+  })
+  const { include, exclude, warnOnError } =
+    config.build.dynamicImportVarsOptions
+  const filter = createFilter(include, exclude)
+  return {
+    name: 'vite:dynamic-import-vars',
+    resolveId(id) {
+      if (id === dynamicImportHelperId) {
+        return id
+      }
+    },
+    load(id) {
+      if (id === dynamicImportHelperId) {
+        return 'export default ' + dynamicImportHelper.toString()
+      }
+    },
+    async transform(source, importer) {
+      if (
+        !filter(importer) ||
+        importer === CLIENT_ENTRY ||
+        !hasDynamicImportRE.test(source)
+      ) {
+        return
+      }
+      await init
+      let imports = []
+      try {
+        imports = parseImports(source)[0]
+      } catch (e) {
+        // ignore as it might not be a JS file, the subsequent plugins will catch the error
+        return null
+      }
+      if (!imports.length) {
+        return null
+      }
+      let s
+      let needDynamicImportHelper = false
+      for (let index = 0; index < imports.length; index++) {
+        const {
+          s: start,
+          e: end,
+          ss: expStart,
+          se: expEnd,
+          d: dynamicIndex,
+        } = imports[index]
+        if (dynamicIndex === -1 || source[start] !== '`') {
+          continue
+        }
+        if (hasViteIgnoreRE.test(source.slice(expStart, expEnd))) {
+          continue
+        }
+        s ||= new MagicString(source)
+        let result
+        try {
+          result = await transformDynamicImport(
+            source.slice(start, end),
+            importer,
+            resolve,
+            config.root,
+          )
+        } catch (error) {
+          if (warnOnError) {
+            this.warn(error)
+          } else {
+            this.error(error)
+          }
+        }
+        if (!result) {
+          continue
+        }
+        const { rawPattern, glob } = result
+        needDynamicImportHelper = true
+        s.overwrite(
+          expStart,
+          expEnd,
+          `__variableDynamicImportRuntimeHelper(${glob}, \`${rawPattern}\`, ${rawPattern.split('/').length})`,
+        )
+      }
+      if (s) {
+        if (needDynamicImportHelper) {
+          s.prepend(
+            `import __variableDynamicImportRuntimeHelper from "${dynamicImportHelperId}";`,
+          )
+        }
+        return transformStableResult(s, importer, config)
+      }
+    },
+  }
+}

@@ -1,0 +1,46 @@
+import 'types/importMeta'
+export const basic = import.meta.glob('./modules/*.ts')
+export const basicEager = import.meta.glob('./modules/*.ts', {
+  eager: true,
+})
+export const ignore = import.meta.glob(['./modules/*.ts', '!**/index.ts'])
+export const namedEager = import.meta.glob('./modules/*.ts', {
+  eager: true,
+  import: 'name',
+})
+export const namedDefault = import.meta.glob('./modules/*.ts', {
+  import: 'default',
+})
+export const eagerAs = import.meta.glob(['./modules/*.ts', '!**/index.ts'], {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+})
+export const rawImportModule = import.meta.glob(
+  ['./modules/*.ts', '!**/index.ts'],
+  { query: '?raw', import: '*' },
+)
+export const excludeSelf = import.meta.glob('./*.ts')
+export const customQueryString = import.meta.glob('./*.ts', { query: 'custom' })
+export const customQueryObject = import.meta.glob('./*.ts', {
+  query: {
+    foo: 'bar',
+    raw: true,
+  },
+})
+export const parent = import.meta.glob('../../playground/src/*.ts', {
+  query: '?url',
+  import: 'default',
+})
+export const rootMixedRelative = import.meta.glob(
+  ['/*.ts', '../fixture-b/*.ts'],
+  { query: '?url', import: 'default' },
+)
+export const cleverCwd1 = import.meta.glob(
+  './node_modules/framework/**/*.page.js',
+)
+export const cleverCwd2 = import.meta.glob([
+  './modules/*.ts',
+  '../fixture-b/*.ts',
+  '!**/index.ts',
+])

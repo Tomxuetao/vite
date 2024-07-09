@@ -27,6 +27,17 @@ test('named import', async () => {
   `)
 })
 
+test('named import: arbitrary module namespace specifier', async () => {
+  expect(
+    await ssrTransformSimpleCode(
+      `import { "some thing" as ref } from 'vue';function foo() { return ref(0) }`,
+    ),
+  ).toMatchInlineSnapshot(`
+    "const __vite_ssr_import_0__ = await __vite_ssr_import__("vue", {"importedNames":["some thing"]});
+    function foo() { return __vite_ssr_import_0__["some thing"](0) }"
+  `)
+})
+
 test('namespace import', async () => {
   expect(
     await ssrTransformSimpleCode(
@@ -118,6 +129,17 @@ test('export * as from', async () => {
 
       Object.defineProperty(__vite_ssr_exports__, "foo", { enumerable: true, configurable: true, get(){ return __vite_ssr_import_0__ }});"
     `)
+})
+
+test('export as arbitrary module namespace identifier', async () => {
+  expect(
+    await ssrTransformSimpleCode(
+      `const something = "Something";export { something as "arbitrary string" };`,
+    ),
+  ).toMatchInlineSnapshot(`
+      "const something = "Something";
+      Object.defineProperty(__vite_ssr_exports__, "arbitrary string", { enumerable: true, configurable: true, get(){ return something }});"  
+  `)
 })
 
 test('export default', async () => {
@@ -247,6 +269,59 @@ test('do not rewrite when function declaration is in scope', async () => {
     function A(){ function fn() {}; return { fn }; }"
   `)
   expect(result?.deps).toEqual(['vue'])
+})
+
+// #16452
+test('do not rewrite when function expression is in scope', async () => {
+  const result = await ssrTransformSimple(
+    `import {fn} from './vue';var a = function() { return function fn() { console.log(fn) } }`,
+  )
+  expect(result?.code).toMatchInlineSnapshot(`
+    "const __vite_ssr_import_0__ = await __vite_ssr_import__("./vue", {"importedNames":["fn"]});
+    var a = function() { return function fn() { console.log(fn) } }"
+  `)
+})
+
+// #16452
+test('do not rewrite when function expression is in global scope', async () => {
+  const result = await ssrTransformSimple(
+    `import {fn} from './vue';foo(function fn(a = fn) { console.log(fn) })`,
+  )
+  expect(result?.code).toMatchInlineSnapshot(`
+    "const __vite_ssr_import_0__ = await __vite_ssr_import__("./vue", {"importedNames":["fn"]});
+    foo(function fn(a = fn) { console.log(fn) })"
+  `)
+})
+
+test('do not rewrite when class declaration is in scope', async () => {
+  const result = await ssrTransformSimple(
+    `import { cls } from 'vue';function A(){ class cls {} return { cls }; }`,
+  )
+  expect(result?.code).toMatchInlineSnapshot(`
+    "const __vite_ssr_import_0__ = await __vite_ssr_import__("vue", {"importedNames":["cls"]});
+    function A(){ class cls {} return { cls }; }"
+  `)
+  expect(result?.deps).toEqual(['vue'])
+})
+
+test('do not rewrite when class expression is in scope', async () => {
+  const result = await ssrTransformSimple(
+    `import { cls } from './vue';var a = function() { return class cls { constructor() { console.log(cls) } } }`,
+  )
+  expect(result?.code).toMatchInlineSnapshot(`
+    "const __vite_ssr_import_0__ = await __vite_ssr_import__("./vue", {"importedNames":["cls"]});
+    var a = function() { return class cls { constructor() { console.log(cls) } } }"
+  `)
+})
+
+test('do not rewrite when class expression is in global scope', async () => {
+  const result = await ssrTransformSimple(
+    `import { cls } from './vue';foo(class cls { constructor() { console.log(cls) } })`,
+  )
+  expect(result?.code).toMatchInlineSnapshot(`
+    "const __vite_ssr_import_0__ = await __vite_ssr_import__("./vue", {"importedNames":["cls"]});
+    foo(class cls { constructor() { console.log(cls) } })"
+  `)
 })
 
 test('do not rewrite catch clause', async () => {
