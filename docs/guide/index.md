@@ -44,7 +44,7 @@ The supported template presets are:
 ## Scaffolding Your First Vite Project
 
 ::: tip Compatibility Note
-Vite requires [Node.js](https://nodejs.org/en/) version 18+. 20+. However, some templates require a higher Node.js version to work, please upgrade if your package manager warns about it.
+Vite requires [Node.js](https://nodejs.org/en/) version 18+ or 20+. However, some templates require a higher Node.js version to work, please upgrade if your package manager warns about it.
 :::
 
 ::: code-group
@@ -104,6 +104,44 @@ cd my-project
 npm install
 npm run dev
 ```
+
+## Manual Installation
+
+In your project, you can install the `vite` CLI using:
+
+::: code-group
+
+```bash [NPM]
+$ npm install -D vite
+```
+
+```bash [Yarn]
+$ yarn add -D vite
+```
+
+```bash [PNPM]
+$ pnpm add -D vite
+```
+
+```bash [Bun]
+$ bun add -D vite
+```
+
+:::
+
+And create an `index.html` file like this:
+
+```html
+<p>Hello Vite!</p>
+```
+
+Then run the `vite` CLI in your terminal:
+
+```bash
+vite
+```
+
+The `index.html` will be served on `http://localhost:5173`.
 
 ## `index.html` and Project Root
 
