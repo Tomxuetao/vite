@@ -1,0 +1,287 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { createRequire } from 'node:module'
+import {
+  createFilter,
+  isInNodeModules,
+  normalizePath,
+  safeRealpathSync,
+  tryStatSync,
+} from './utils'
+let pnp
+if (process.versions.pnp) {
+  try {
+    pnp = createRequire(import.meta.url)('pnpapi')
+  } catch {}
+}
+function invalidatePackageData(packageCache, pkgPath) {
+  const pkgDir = normalizePath(path.dirname(pkgPath))
+  packageCache.forEach((pkg, cacheKey) => {
+    if (pkg.dir === pkgDir) {
+      packageCache.delete(cacheKey)
+    }
+  })
+}
+export function resolvePackageData(
+  pkgName,
+  basedir,
+  preserveSymlinks = false,
+  packageCache,
+) {
+  if (pnp) {
+    const cacheKey = getRpdCacheKey(pkgName, basedir, preserveSymlinks)
+    if (packageCache?.has(cacheKey)) return packageCache.get(cacheKey)
+    try {
+      const pkg = pnp.resolveToUnqualified(pkgName, basedir, {
+        considerBuiltins: false,
+      })
+      if (!pkg) return null
+      const pkgData = loadPackageData(path.join(pkg, 'package.json'))
+      packageCache?.set(cacheKey, pkgData)
+      return pkgData
+    } catch {
+      return null
+    }
+  }
+  const originalBasedir = basedir
+  while (basedir) {
+    if (packageCache) {
+      const cached = getRpdCache(
+        packageCache,
+        pkgName,
+        basedir,
+        originalBasedir,
+        preserveSymlinks,
+      )
+      if (cached) return cached
+    }
+    const pkg = path.join(basedir, 'node_modules', pkgName, 'package.json')
+    try {
+      if (fs.existsSync(pkg)) {
+        const pkgPath = preserveSymlinks ? pkg : safeRealpathSync(pkg)
+        const pkgData = loadPackageData(pkgPath)
+        if (packageCache) {
+          setRpdCache(
+            packageCache,
+            pkgData,
+            pkgName,
+            basedir,
+            originalBasedir,
+            preserveSymlinks,
+          )
+        }
+        return pkgData
+      }
+    } catch {}
+    const nextBasedir = path.dirname(basedir)
+    if (nextBasedir === basedir) break
+    basedir = nextBasedir
+  }
+  return null
+}
+export function findNearestPackageData(basedir, packageCache) {
+  const originalBasedir = basedir
+  while (basedir) {
+    if (packageCache) {
+      const cached = getFnpdCache(packageCache, basedir, originalBasedir)
+      if (cached) return cached
+    }
+    const pkgPath = path.join(basedir, 'package.json')
+    if (tryStatSync(pkgPath)?.isFile()) {
+      try {
+        const pkgData = loadPackageData(pkgPath)
+        if (packageCache) {
+          setFnpdCache(packageCache, pkgData, basedir, originalBasedir)
+        }
+        return pkgData
+      } catch {}
+    }
+    const nextBasedir = path.dirname(basedir)
+    if (nextBasedir === basedir) break
+    basedir = nextBasedir
+  }
+  return null
+}
+// Finds the nearest package.json with a `name` field
+export function findNearestMainPackageData(basedir, packageCache) {
+  const nearestPackage = findNearestPackageData(basedir, packageCache)
+  return (
+    nearestPackage &&
+    (nearestPackage.data.name
+      ? nearestPackage
+      : findNearestMainPackageData(
+          path.dirname(nearestPackage.dir),
+          packageCache,
+        ))
+  )
+}
+export function loadPackageData(pkgPath) {
+  const data = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
+  const pkgDir = normalizePath(path.dirname(pkgPath))
+  const { sideEffects } = data
+  let hasSideEffects
+  if (typeof sideEffects === 'boolean') {
+    hasSideEffects = () => sideEffects
+  } else if (Array.isArray(sideEffects)) {
+    if (sideEffects.length <= 0) {
+      // createFilter always returns true if `includes` is an empty array
+      // but here we want it to always return false
+      hasSideEffects = () => false
+    } else {
+      const finalPackageSideEffects = sideEffects.map((sideEffect) => {
+        /*
+         * The array accepts simple glob patterns to the relevant files... Patterns like *.css, which do not include a /, will be treated like **\/*.css.
+         * https://webpack.js.org/guides/tree-shaking/
+         * https://github.com/vitejs/vite/pull/11807
+         */
+        if (sideEffect.includes('/')) {
+          return sideEffect
+        }
+        return `**/${sideEffect}`
+      })
+      hasSideEffects = createFilter(finalPackageSideEffects, null, {
+        resolve: pkgDir,
+      })
+    }
+  } else {
+    hasSideEffects = () => null
+  }
+  const pkg = {
+    dir: pkgDir,
+    data,
+    hasSideEffects,
+    webResolvedImports: {},
+    nodeResolvedImports: {},
+    setResolvedCache(key, entry, targetWeb) {
+      if (targetWeb) {
+        pkg.webResolvedImports[key] = entry
+      } else {
+        pkg.nodeResolvedImports[key] = entry
+      }
+    },
+    getResolvedCache(key, targetWeb) {
+      if (targetWeb) {
+        return pkg.webResolvedImports[key]
+      } else {
+        return pkg.nodeResolvedImports[key]
+      }
+    },
+  }
+  return pkg
+}
+export function watchPackageDataPlugin(packageCache) {
+  // a list of files to watch before the plugin is ready
+  const watchQueue = new Set()
+  const watchedDirs = new Set()
+  const watchFileStub = (id) => {
+    watchQueue.add(id)
+  }
+  let watchFile = watchFileStub
+  const setPackageData = packageCache.set.bind(packageCache)
+  packageCache.set = (id, pkg) => {
+    if (!isInNodeModules(pkg.dir) && !watchedDirs.has(pkg.dir)) {
+      watchedDirs.add(pkg.dir)
+      watchFile(path.join(pkg.dir, 'package.json'))
+    }
+    return setPackageData(id, pkg)
+  }
+  return {
+    name: 'vite:watch-package-data',
+    buildStart() {
+      watchFile = this.addWatchFile.bind(this)
+      watchQueue.forEach(watchFile)
+      watchQueue.clear()
+    },
+    buildEnd() {
+      watchFile = watchFileStub
+    },
+    watchChange(id) {
+      if (id.endsWith('/package.json')) {
+        invalidatePackageData(packageCache, path.normalize(id))
+      }
+    },
+    handleHotUpdate({ file }) {
+      if (file.endsWith('/package.json')) {
+        invalidatePackageData(packageCache, path.normalize(file))
+      }
+    },
+  }
+}
+/**
+ * Get cached `resolvePackageData` value based on `basedir`. When one is found,
+ * and we've already traversed some directories between `basedir` and `originalBasedir`,
+ * we cache the value for those in-between directories as well.
+ *
+ * This makes it so the fs is only read once for a shared `basedir`.
+ */
+function getRpdCache(
+  packageCache,
+  pkgName,
+  basedir,
+  originalBasedir,
+  preserveSymlinks,
+) {
+  const cacheKey = getRpdCacheKey(pkgName, basedir, preserveSymlinks)
+  const pkgData = packageCache.get(cacheKey)
+  if (pkgData) {
+    traverseBetweenDirs(originalBasedir, basedir, (dir) => {
+      packageCache.set(getRpdCacheKey(pkgName, dir, preserveSymlinks), pkgData)
+    })
+    return pkgData
+  }
+}
+function setRpdCache(
+  packageCache,
+  pkgData,
+  pkgName,
+  basedir,
+  originalBasedir,
+  preserveSymlinks,
+) {
+  packageCache.set(getRpdCacheKey(pkgName, basedir, preserveSymlinks), pkgData)
+  traverseBetweenDirs(originalBasedir, basedir, (dir) => {
+    packageCache.set(getRpdCacheKey(pkgName, dir, preserveSymlinks), pkgData)
+  })
+}
+// package cache key for `resolvePackageData`
+function getRpdCacheKey(pkgName, basedir, preserveSymlinks) {
+  return `rpd_${pkgName}_${basedir}_${preserveSymlinks}`
+}
+/**
+ * Get cached `findNearestPackageData` value based on `basedir`. When one is found,
+ * and we've already traversed some directories between `basedir` and `originalBasedir`,
+ * we cache the value for those in-between directories as well.
+ *
+ * This makes it so the fs is only read once for a shared `basedir`.
+ */
+function getFnpdCache(packageCache, basedir, originalBasedir) {
+  const cacheKey = getFnpdCacheKey(basedir)
+  const pkgData = packageCache.get(cacheKey)
+  if (pkgData) {
+    traverseBetweenDirs(originalBasedir, basedir, (dir) => {
+      packageCache.set(getFnpdCacheKey(dir), pkgData)
+    })
+    return pkgData
+  }
+}
+function setFnpdCache(packageCache, pkgData, basedir, originalBasedir) {
+  packageCache.set(getFnpdCacheKey(basedir), pkgData)
+  traverseBetweenDirs(originalBasedir, basedir, (dir) => {
+    packageCache.set(getFnpdCacheKey(dir), pkgData)
+  })
+}
+// package cache key for `findNearestPackageData`
+function getFnpdCacheKey(basedir) {
+  return `fnpd_${basedir}`
+}
+/**
+ * Traverse between `longerDir` (inclusive) and `shorterDir` (exclusive) and call `cb` for each dir.
+ * @param longerDir Longer dir path, e.g. `/User/foo/bar/baz`
+ * @param shorterDir Shorter dir path, e.g. `/User/foo`
+ */
+function traverseBetweenDirs(longerDir, shorterDir, cb) {
+  while (longerDir !== shorterDir) {
+    cb(longerDir)
+    longerDir = path.dirname(longerDir)
+  }
+}
