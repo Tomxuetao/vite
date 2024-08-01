@@ -163,7 +163,7 @@ export async function replaceDefine(code, id, define, config) {
  */
 export function serializeDefine(define) {
   let res = `{`
-  const keys = Object.keys(define)
+  const keys = Object.keys(define).sort()
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i]
     const val = define[key]

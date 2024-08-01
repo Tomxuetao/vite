@@ -241,7 +241,7 @@ export function webWorkerPlugin(config) {
             workerConstructor === 'Worker'
               ? `${encodedJs}
           const decodeBase64 = (base64) => Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-          const blob = typeof window !== "undefined" && window.Blob && new Blob([${
+          const blob = typeof self !== "undefined" && self.Blob && new Blob([${
             workerType === 'classic'
               ? ''
               : // `URL` is always available, in `Worker[type="module"]`
@@ -250,11 +250,11 @@ export function webWorkerPlugin(config) {
           export default function WorkerWrapper(options) {
             let objURL;
             try {
-              objURL = blob && (window.URL || window.webkitURL).createObjectURL(blob);
+              objURL = blob && (self.URL || self.webkitURL).createObjectURL(blob);
               if (!objURL) throw ''
               const worker = new ${workerConstructor}(objURL, ${workerTypeOption});
               worker.addEventListener("error", () => {
-                (window.URL || window.webkitURL).revokeObjectURL(objURL);
+                (self.URL || self.webkitURL).revokeObjectURL(objURL);
               });
               return worker;
             } catch(e) {
@@ -267,7 +267,7 @@ export function webWorkerPlugin(config) {
               // otherwise the worker fails to run
               workerType === 'classic'
                 ? ` finally {
-                    objURL && (window.URL || window.webkitURL).revokeObjectURL(objURL);
+                    objURL && (self.URL || self.webkitURL).revokeObjectURL(objURL);
                   }`
                 : ''
             }

@@ -121,7 +121,7 @@ export function resolvePlugin(resolveOptions) {
       if (resolvedImports) {
         id = resolvedImports
         if (resolveOpts.custom?.['vite:import-glob']?.isSubImportsPattern) {
-          return id
+          return normalizePath(path.join(root, id))
         }
       }
       if (importer) {

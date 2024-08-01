@@ -1,10 +1,9 @@
 /// <reference types="node" />
-/// <reference types="node" />
-import type { Server } from 'node:http'
 import type { EventEmitter } from 'node:events'
 import type { CustomPayload, HMRPayload } from 'types/hmrPayload'
 import type { InferCustomEventPayload, ViteDevServer } from '..'
 import type { ModuleNode } from './moduleGraph'
+import type { HttpServer } from '.'
 export declare const debugHmr: ((...args: any[]) => any) | undefined
 export interface HmrOptions {
   protocol?: string
@@ -14,7 +13,7 @@ export interface HmrOptions {
   path?: string
   timeout?: number
   overlay?: boolean
-  server?: Server
+  server?: HttpServer
 }
 export interface HmrContext {
   file: string

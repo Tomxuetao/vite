@@ -12,7 +12,7 @@ import type { Logger } from '../logger'
 import type { FetchResult } from '../../runtime/types'
 import type { PluginContainer } from './pluginContainer'
 import type { WebSocketServer } from './ws'
-import type { ModuleGraph , ModuleNode } from './moduleGraph'
+import type { ModuleGraph, ModuleNode } from './moduleGraph'
 import type { HMRBroadcaster, HmrOptions } from './hmr'
 import type { TransformOptions, TransformResult } from './transformRequest'
 export interface ServerOptions extends CommonServerOptions {
@@ -56,7 +56,7 @@ export interface ServerOptions extends CommonServerOptions {
          *
          * This is needed to proxy WebSocket connections to the parent server.
          */
-        server: http.Server
+        server: HttpServer
       }
   /**
    * Options for files served via '/\@fs/'.

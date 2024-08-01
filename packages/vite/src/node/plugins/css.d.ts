@@ -101,7 +101,7 @@ export declare const removedPureCssFilesCache: WeakMap<
   Readonly<
     Omit<
       import('../config').UserConfig,
-      'plugins' | 'css' | 'assetsInclude' | 'optimizeDeps' | 'worker' | 'build'
+      'css' | 'plugins' | 'assetsInclude' | 'optimizeDeps' | 'worker' | 'build'
     > & {
       configFile: string | undefined
       configFileDependencies: string[]
@@ -117,8 +117,8 @@ export declare const removedPureCssFilesCache: WeakMap<
       mainConfig: Readonly<
         Omit<
           import('../config').UserConfig,
-          | 'plugins'
           | 'css'
+          | 'plugins'
           | 'assetsInclude'
           | 'optimizeDeps'
           | 'worker'

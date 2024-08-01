@@ -58,7 +58,10 @@ function getWorkerType(raw, clean, i) {
     return 'classic'
   }
   const workerOpts = parseWorkerOptions(workerOptString, commaIndex + 1)
-  if (workerOpts.type && ['classic', 'module'].includes(workerOpts.type)) {
+  if (
+    workerOpts.type &&
+    (workerOpts.type === 'module' || workerOpts.type === 'classic')
+  ) {
     return workerOpts.type
   }
   return 'classic'

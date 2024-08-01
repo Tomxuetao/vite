@@ -562,7 +562,10 @@ export function resolveBuildOutputs(outputs, libOptions, logger) {
       )
     }
     outputs.forEach((output) => {
-      if (['umd', 'iife'].includes(output.format) && !output.name) {
+      if (
+        (output.format === 'umd' || output.format === 'iife') &&
+        !output.name
+      ) {
         throw new Error(
           'Entries in "build.rollupOptions.output" must specify "name" when the format is "umd" or "iife".',
         )
@@ -608,7 +611,6 @@ export function onRollupWarning(warning, warn, config) {
       if (
         warning.plugin === 'rollup-plugin-dynamic-import-variables' &&
         dynamicImportWarningIgnoreList.some((msg) =>
-          // @ts-expect-error warning is RollupLog
           warning.message.includes(msg),
         )
       ) {

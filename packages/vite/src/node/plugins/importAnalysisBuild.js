@@ -25,7 +25,7 @@ export const preloadHelperId = '\0vite/preload-helper.js'
 const preloadMarkerRE = new RegExp(preloadMarker, 'g')
 const dynamicImportPrefixRE = /import\s*\(/
 const dynamicImportTreeshakenRE =
-  /((?:\bconst\s+|\blet\s+|\bvar\s+|,\s*)(\{[^}.=]+\})\s*=\s*await\s+import\([^)]+\))|(\(\s*await\s+import\([^)]+\)\s*\)(\??\.[\w$]+))|\bimport\([^)]+\)(\s*\.then\(\s*(?:function\s*)?\(\s*\{([^}.=]+)\}\))/g
+  /((?:\bconst\s+|\blet\s+|\bvar\s+|,\s*)(\{[^{}.=]+\})\s*=\s*await\s+import\([^)]+\))|(\(\s*await\s+import\([^)]+\)\s*\)(\??\.[\w$]+))|\bimport\([^)]+\)(\s*\.then\(\s*(?:function\s*)?\(\s*\{([^{}.=]+)\}\))/g
 function toRelativePath(filename, importer) {
   const relPath = path.posix.relative(path.posix.dirname(importer), filename)
   return relPath[0] === '.' ? relPath : `./${relPath}`

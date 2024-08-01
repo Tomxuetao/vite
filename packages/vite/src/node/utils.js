@@ -686,7 +686,6 @@ export function combineSourcemaps(filename, sourcemapList) {
     }
     return newSourcemaps
   })
-  const escapedFilename = escapeToLinuxLikePath(filename)
   // We don't declare type here so we can convert/fake/map as RawSourceMap
   let map //: SourceMap
   let mapIndex = 1
@@ -696,11 +695,14 @@ export function combineSourcemaps(filename, sourcemapList) {
     map = remapping(sourcemapList, () => null)
   } else {
     map = remapping(sourcemapList[0], function loader(sourcefile) {
-      if (sourcefile === escapedFilename && sourcemapList[mapIndex]) {
-        return sourcemapList[mapIndex++]
-      } else {
-        return null
+      const mapForSources = sourcemapList
+        .slice(mapIndex)
+        .find((s) => s.sources.includes(sourcefile))
+      if (mapForSources) {
+        mapIndex++
+        return mapForSources
       }
+      return null
     })
   }
   if (!map.file) {

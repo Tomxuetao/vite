@@ -427,9 +427,6 @@ export async function toAbsoluteGlob(glob, root, importer, resolveId) {
       custom: { 'vite:import-glob': { isSubImportsPattern } },
     })) || glob,
   )
-  if (isSubImportsPattern) {
-    return join(root, resolved)
-  }
   if (isAbsolute(resolved)) {
     return pre + globSafeResolvedPath(resolved, glob)
   }

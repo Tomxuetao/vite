@@ -15,7 +15,7 @@ export declare const generatedAssets: WeakMap<
   Readonly<
     Omit<
       import('../config').UserConfig,
-      'plugins' | 'css' | 'assetsInclude' | 'optimizeDeps' | 'worker' | 'build'
+      'css' | 'plugins' | 'assetsInclude' | 'optimizeDeps' | 'worker' | 'build'
     > & {
       configFile: string | undefined
       configFileDependencies: string[]
@@ -31,8 +31,8 @@ export declare const generatedAssets: WeakMap<
       mainConfig: Readonly<
         Omit<
           import('../config').UserConfig,
-          | 'plugins'
           | 'css'
+          | 'plugins'
           | 'assetsInclude'
           | 'optimizeDeps'
           | 'worker'
@@ -96,7 +96,7 @@ export declare const publicAssetUrlCache: WeakMap<
   Readonly<
     Omit<
       import('../config').UserConfig,
-      'plugins' | 'css' | 'assetsInclude' | 'optimizeDeps' | 'worker' | 'build'
+      'css' | 'plugins' | 'assetsInclude' | 'optimizeDeps' | 'worker' | 'build'
     > & {
       configFile: string | undefined
       configFileDependencies: string[]
@@ -112,8 +112,8 @@ export declare const publicAssetUrlCache: WeakMap<
       mainConfig: Readonly<
         Omit<
           import('../config').UserConfig,
-          | 'plugins'
           | 'css'
+          | 'plugins'
           | 'assetsInclude'
           | 'optimizeDeps'
           | 'worker'

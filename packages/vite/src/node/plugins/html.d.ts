@@ -16,7 +16,7 @@ export declare const htmlProxyMap: WeakMap<
   Readonly<
     Omit<
       import('../config').UserConfig,
-      'plugins' | 'css' | 'assetsInclude' | 'optimizeDeps' | 'worker' | 'build'
+      'css' | 'plugins' | 'assetsInclude' | 'optimizeDeps' | 'worker' | 'build'
     > & {
       configFile: string | undefined
       configFileDependencies: string[]
@@ -32,8 +32,8 @@ export declare const htmlProxyMap: WeakMap<
       mainConfig: Readonly<
         Omit<
           import('../config').UserConfig,
-          | 'plugins'
           | 'css'
+          | 'plugins'
           | 'assetsInclude'
           | 'optimizeDeps'
           | 'worker'
@@ -98,7 +98,7 @@ export declare const isAsyncScriptMap: WeakMap<
   Readonly<
     Omit<
       import('../config').UserConfig,
-      'plugins' | 'css' | 'assetsInclude' | 'optimizeDeps' | 'worker' | 'build'
+      'css' | 'plugins' | 'assetsInclude' | 'optimizeDeps' | 'worker' | 'build'
     > & {
       configFile: string | undefined
       configFileDependencies: string[]
@@ -114,8 +114,8 @@ export declare const isAsyncScriptMap: WeakMap<
       mainConfig: Readonly<
         Omit<
           import('../config').UserConfig,
-          | 'plugins'
           | 'css'
+          | 'plugins'
           | 'assetsInclude'
           | 'optimizeDeps'
           | 'worker'
