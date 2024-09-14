@@ -145,20 +145,23 @@ function preload(
     )
   }
 
+  function handlePreloadError(err: Error) {
+    const e = new Event('vite:preloadError', {
+      cancelable: true,
+    }) as VitePreloadErrorEvent
+    e.payload = err
+    window.dispatchEvent(e)
+    if (!e.defaultPrevented) {
+      throw err
+    }
+  }
+
   return promise.then((res) => {
     for (const item of res || []) {
       if (item.status !== 'rejected') continue
-
-      const e = new Event('vite:preloadError', {
-        cancelable: true,
-      }) as VitePreloadErrorEvent
-      e.payload = item.reason
-      window.dispatchEvent(e)
-      if (!e.defaultPrevented) {
-        throw item.reason
-      }
+      handlePreloadError(item.reason)
     }
-    return baseModule()
+    return baseModule().catch(handlePreloadError)
   })
 }
 
@@ -513,7 +516,7 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
                 if (rawUrl[0] === `"` && rawUrl[rawUrl.length - 1] === `"`)
                   url = rawUrl.slice(1, -1)
               }
-              const deps: Set<string> = new Set()
+              const deps = new Set<string>()
               let hasRemovedPureCssChunk = false
 
               let normalizedFile: string | undefined = undefined
