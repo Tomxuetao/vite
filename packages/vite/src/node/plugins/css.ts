@@ -2300,7 +2300,7 @@ const makeModernScssWorker = (
               fileURLToPath(canonicalUrl),
               options.filename,
             )
-            return { contents, syntax }
+            return { contents, syntax, sourceMapUrl: canonicalUrl }
           },
         }
         sassOptions.importers = [
@@ -2350,7 +2350,7 @@ const makeModernCompilerScssWorker = (
   alias: Alias[],
   _maxWorkers: number | undefined,
 ) => {
-  let compiler: Sass.AsyncCompiler | undefined
+  let compilerPromise: Promise<Sass.AsyncCompiler> | undefined
 
   const worker: Awaited<ReturnType<typeof makeModernScssWorker>> = {
     async run(sassPath, data, options) {
@@ -2358,7 +2358,8 @@ const makeModernCompilerScssWorker = (
       // https://github.com/nodejs/node/issues/31710
       const sass: typeof Sass = (await import(pathToFileURL(sassPath).href))
         .default
-      compiler ??= await sass.initAsyncCompiler()
+      compilerPromise ??= sass.initAsyncCompiler()
+      const compiler = await compilerPromise
 
       const sassOptions = { ...options } as Sass.StringOptions<'async'>
       sassOptions.url = pathToFileURL(options.filename)
@@ -2394,7 +2395,7 @@ const makeModernCompilerScssWorker = (
           )
           const contents =
             result.contents ?? (await fsp.readFile(result.file, 'utf-8'))
-          return { contents, syntax }
+          return { contents, syntax, sourceMapUrl: canonicalUrl }
         },
       }
       sassOptions.importers = [
@@ -2414,8 +2415,8 @@ const makeModernCompilerScssWorker = (
       } satisfies ScssWorkerResult
     },
     async stop() {
-      compiler?.dispose()
-      compiler = undefined
+      ;(await compilerPromise)?.dispose()
+      compilerPromise = undefined
     },
   }
 
