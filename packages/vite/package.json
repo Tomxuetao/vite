@@ -1,6 +1,6 @@
 {
   "name": "vite",
-  "version": "6.0.0-beta.1",
+  "version": "6.0.0-beta.2",
   "type": "module",
   "license": "MIT",
   "author": "Evan You",
@@ -68,7 +68,7 @@
   "bugs": {
     "url": "https://github.com/vitejs/vite/issues"
   },
-  "homepage": "https://vitejs.dev",
+  "homepage": "https://vite.dev",
   "funding": "https://github.com/vitejs/vite?sponsor=1",
   "scripts": {
     "dev": "tsx scripts/dev.ts",
@@ -87,18 +87,18 @@
   "dependencies": {
     "esbuild": "^0.24.0",
     "postcss": "^8.4.47",
-    "rollup": "^4.20.0"
+    "rollup": "^4.22.5"
   },
   "optionalDependencies": {
     "fsevents": "~2.3.3"
   },
   "devDependencies": {
     "@ampproject/remapping": "^2.3.0",
-    "@babel/parser": "^7.25.6",
+    "@babel/parser": "^7.25.7",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@polka/compression": "^1.0.0-next.25",
     "@rollup/plugin-alias": "^5.1.1",
-    "@rollup/plugin-commonjs": "^26.0.3",
+    "@rollup/plugin-commonjs": "^28.0.0",
     "@rollup/plugin-dynamic-import-vars": "^2.1.3",
     "@rollup/plugin-json": "^6.1.0",
     "@rollup/plugin-node-resolve": "15.3.0",
@@ -126,7 +126,7 @@
     "lightningcss": "^1.27.0",
     "magic-string": "^0.30.11",
     "micromatch": "^4.0.8",
-    "mlly": "^1.7.1",
+    "mlly": "^1.7.2",
     "mrmime": "^2.0.0",
     "nanoid": "^5.0.7",
     "open": "^8.4.2",
@@ -142,13 +142,13 @@
     "rollup-plugin-dts": "^6.1.1",
     "rollup-plugin-esbuild": "^6.1.1",
     "rollup-plugin-license": "^3.5.3",
-    "sass": "^1.79.3",
-    "sass-embedded": "^1.79.3",
+    "sass": "^1.79.4",
+    "sass-embedded": "^1.79.4",
     "sirv": "^2.0.4",
     "source-map-support": "^0.5.21",
     "strip-ansi": "^7.1.0",
     "strip-literal": "^2.1.0",
-    "tsconfck": "^3.1.3",
+    "tsconfck": "^3.1.4",
     "tslib": "^2.7.0",
     "types": "link:./types",
     "ufo": "^1.5.4",

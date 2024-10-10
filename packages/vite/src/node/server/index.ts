@@ -40,10 +40,13 @@ import { getFsUtils } from '../fsUtils'
 import { ssrLoadModule } from '../ssr/ssrModuleLoader'
 import { ssrFixStacktrace, ssrRewriteStacktrace } from '../ssr/ssrStacktrace'
 import { ssrTransform } from '../ssr/ssrTransform'
-import { ERR_OUTDATED_OPTIMIZED_DEP } from '../plugins/optimizedDeps'
 import { bindCLIShortcuts } from '../shortcuts'
 import type { BindCLIShortcutsOptions } from '../shortcuts'
-import { CLIENT_DIR, DEFAULT_DEV_PORT } from '../constants'
+import {
+  CLIENT_DIR,
+  DEFAULT_DEV_PORT,
+  ERR_OUTDATED_OPTIMIZED_DEP,
+} from '../constants'
 import type { Logger } from '../logger'
 import { printServerUrls } from '../logger'
 import { warnFutureDeprecation } from '../deprecations'
@@ -89,7 +92,7 @@ import {
 import { openBrowser as _openBrowser } from './openBrowser'
 import type { TransformOptions, TransformResult } from './transformRequest'
 import { transformRequest } from './transformRequest'
-import { searchForWorkspaceRoot } from './searchRoot'
+import { searchForPackageRoot, searchForWorkspaceRoot } from './searchRoot'
 import { warmupFiles } from './warmup'
 import type { DevEnvironment } from './environment'
 
@@ -1042,14 +1045,17 @@ export function resolveServerOptions(
   }
 
   if (process.versions.pnp) {
+    // running a command fails if cwd doesn't exist and root may not exist
+    // search for package root to find a path that exists
+    const cwd = searchForPackageRoot(root)
     try {
       const enableGlobalCache =
-        execSync('yarn config get enableGlobalCache', { cwd: root })
+        execSync('yarn config get enableGlobalCache', { cwd })
           .toString()
           .trim() === 'true'
       const yarnCacheDir = execSync(
         `yarn config get ${enableGlobalCache ? 'globalFolder' : 'cacheFolder'}`,
-        { cwd: root },
+        { cwd },
       )
         .toString()
         .trim()
@@ -1145,7 +1151,7 @@ async function restartServer(server: ViteDevServer) {
   if (!middlewareMode) {
     await server.listen(port, true)
   } else {
-    server.ws.listen()
+    Object.values(server.environments).forEach((e) => e.hot.listen())
   }
   logger.info('server restarted.', { timestamp: true })
 
