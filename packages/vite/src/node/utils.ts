@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import os from 'node:os'
+import net from 'node:net'
 import path from 'node:path'
 import { exec } from 'node:child_process'
 import crypto from 'node:crypto'
@@ -850,6 +851,10 @@ const nullSourceMap: RawSourceMap = {
   mappings: '',
   version: 3,
 }
+/**
+ * Combines multiple sourcemaps into a single sourcemap.
+ * Note that the length of sourcemapList must be 2.
+ */
 export function combineSourcemaps(
   filename: string,
   sourcemapList: Array<DecodedSourceMap | RawSourceMap>,
@@ -874,6 +879,7 @@ export function combineSourcemaps(
     }
     return newSourcemaps
   })
+  const escapedFilename = escapeToLinuxLikePath(filename)
 
   // We don't declare type here so we can convert/fake/map as RawSourceMap
   let map //: SourceMap
@@ -884,15 +890,12 @@ export function combineSourcemaps(
     map = remapping(sourcemapList, () => null)
   } else {
     map = remapping(sourcemapList[0], function loader(sourcefile) {
-      const mapForSources = sourcemapList
-        .slice(mapIndex)
-        .find((s) => s.sources.includes(sourcefile))
-
-      if (mapForSources) {
-        mapIndex++
-        return mapForSources
+      // this line assumes that the length of the sourcemapList is 2
+      if (sourcefile === escapedFilename && sourcemapList[mapIndex]) {
+        return sourcemapList[mapIndex++]
+      } else {
+        return null
       }
-      return null
     })
   }
   if (!map.file) {
@@ -1083,8 +1086,13 @@ export function extractHostnamesFromSubjectAltName(
     }
     remaining = remaining.slice(/* for , */ 1).trimStart()
 
-    // [::1] might be included but skip it as it's already included as a local address
-    if (name === 'DNS' && value !== '[::1]') {
+    if (
+      name === 'DNS' &&
+      // [::1] might be included but skip it as it's already included as a local address
+      value !== '[::1]' &&
+      // skip *.IPv4 addresses, which is invalid
+      !(value.startsWith('*.') && net.isIPv4(value.slice(2)))
+    ) {
       hostnames.push(value.replace('*', 'vite'))
     }
   }
@@ -1353,8 +1361,8 @@ function normalizeSingleAlias({
 }: Alias): Alias {
   if (
     typeof find === 'string' &&
-    find[find.length - 1] === '/' &&
-    replacement[replacement.length - 1] === '/'
+    find.endsWith('/') &&
+    replacement.endsWith('/')
   ) {
     find = find.slice(0, find.length - 1)
     replacement = replacement.slice(0, replacement.length - 1)
@@ -1452,7 +1460,7 @@ export function joinUrlSegments(a: string, b: string): string {
   if (!a || !b) {
     return a || b || ''
   }
-  if (a[a.length - 1] === '/') {
+  if (a.endsWith('/')) {
     a = a.substring(0, a.length - 1)
   }
   if (b[0] !== '/') {

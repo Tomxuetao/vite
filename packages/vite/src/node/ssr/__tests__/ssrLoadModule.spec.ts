@@ -292,3 +292,90 @@ test('plugin error', async () => {
       Plugin: test-plugin"
   `)
 })
+
+test('named exports overwrite export all', async () => {
+  const server = await createDevServer()
+  const mod = await server.ssrLoadModule(
+    './fixtures/named-overwrite-all/main.js',
+  )
+
+  // ESM spec doesn't allow conflicting `export *` and such duplicate exports are removed (in this case "d"),
+  // but this is likely not possible to support due to Vite dev SSR's lazy nature.
+  // [Node]
+  //   $ node -e 'import("./packages/vite/src/node/ssr/__tests__/fixtures/named-overwrite-all/main.js").then(console.log)'
+  //   [Module: null prototype] { a: 'main-a', b: 'dep1-b', c: 'main-c' }
+  // [Rollup]
+  //   Conflicting namespaces: "main.js" re-exports "d" from one of the modules "dep1.js" and "dep2.js" (will be ignored).
+  expect(mod).toMatchInlineSnapshot(`
+    {
+      "a": "main-a",
+      "b": "dep1-b",
+      "c": "main-c",
+      "d": "dep1-d",
+    }
+  `)
+})
+
+test('buildStart before transform', async () => {
+  const fn = vi.fn()
+  const server = await createServer({
+    configFile: false,
+    root,
+    logLevel: 'error',
+    plugins: [
+      {
+        name: 'test-plugin',
+        async buildStart() {
+          fn('buildStart:in')
+          await new Promise((r) => setTimeout(r, 200))
+          fn('buildStart:out')
+        },
+        resolveId(source) {
+          if (source === 'virtual:test') {
+            fn('resolveId')
+            return '\0' + source
+          }
+        },
+        load(id) {
+          if (id === '\0virtual:test') {
+            fn('load')
+            return `export default 'ok'`
+          }
+        },
+        transform(code, id) {
+          if (id === '\0virtual:test') {
+            fn('transform')
+            return code
+          }
+        },
+      },
+    ],
+  })
+  onTestFinished(() => server.close())
+  await server.pluginContainer.buildStart({})
+
+  const mod = await server.ssrLoadModule('virtual:test')
+  expect(mod.default).toBe('ok')
+  expect(fn.mock.calls).toMatchInlineSnapshot(`
+    [
+      [
+        "buildStart:in",
+      ],
+      [
+        "buildStart:out",
+      ],
+      [
+        "resolveId",
+      ],
+      [
+        "resolveId",
+      ],
+      [
+        "load",
+      ],
+      [
+        "transform",
+      ],
+    ]
+  `)
+})

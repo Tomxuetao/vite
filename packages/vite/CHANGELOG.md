@@ -1,3 +1,62 @@
+## <small>6.2.1 (2025-03-07)</small>
+
+* refactor: remove `isBuild` check from preAliasPlugin (#19587) ([c9e086d](https://github.com/vitejs/vite/commit/c9e086d35ac35ee1c6d85d48369e8a67a2ba6bfe)), closes [#19587](https://github.com/vitejs/vite/issues/19587)
+* refactor: restore endsWith usage (#19554) ([6113a96](https://github.com/vitejs/vite/commit/6113a9670cc9b7d29fe0bffe033f7823e36ded00)), closes [#19554](https://github.com/vitejs/vite/issues/19554)
+* refactor: use `applyToEnvironment` in internal plugins (#19588) ([f678442](https://github.com/vitejs/vite/commit/f678442d5701a00648a745956f9d884247e4e710)), closes [#19588](https://github.com/vitejs/vite/issues/19588)
+* fix(css): stabilize css module hashes with lightningcss in dev mode (#19481) ([92125b4](https://github.com/vitejs/vite/commit/92125b41e4caa3e862bf5fd9b1941546f25d9bf2)), closes [#19481](https://github.com/vitejs/vite/issues/19481)
+* fix(deps): update all non-major dependencies (#19555) ([f612e0f](https://github.com/vitejs/vite/commit/f612e0fdf6810317b61fcca1ded125755f261d78)), closes [#19555](https://github.com/vitejs/vite/issues/19555)
+* fix(reporter): fix incorrect bundle size calculation with non-ASCII characters (#19561) ([437c0ed](https://github.com/vitejs/vite/commit/437c0ed8baa6739bbe944779b9e7515f9035046a)), closes [#19561](https://github.com/vitejs/vite/issues/19561)
+* fix(sourcemap): combine sourcemaps with multiple sources without matched source (#18971) ([e3f6ae1](https://github.com/vitejs/vite/commit/e3f6ae14f7a93118d7341de7379967f815725c4b)), closes [#18971](https://github.com/vitejs/vite/issues/18971)
+* fix(ssr): named export should overwrite export all (#19534) ([2fd2fc1](https://github.com/vitejs/vite/commit/2fd2fc110738622651d361488767734cc23c34dd)), closes [#19534](https://github.com/vitejs/vite/issues/19534)
+* feat: add `*?url&no-inline` type and warning for `.json?inline` / `.json?no-inline` (#19566) ([c0d3667](https://github.com/vitejs/vite/commit/c0d36677cd305e8fa89153ed6305f0e0df43d289)), closes [#19566](https://github.com/vitejs/vite/issues/19566)
+* test: add glob import test case (#19516) ([aa1d807](https://github.com/vitejs/vite/commit/aa1d8075cc7ce7fbba62fea9e37ccb9b304fc039)), closes [#19516](https://github.com/vitejs/vite/issues/19516)
+* test: convert config playground to unit tests (#19568) ([c0e68da](https://github.com/vitejs/vite/commit/c0e68da4774f3487e9ba0c4d4d2c5e76bdc890ea)), closes [#19568](https://github.com/vitejs/vite/issues/19568)
+* test: convert resolve-config playground to unit tests (#19567) ([db5fb48](https://github.com/vitejs/vite/commit/db5fb48f5d4c1ee411e59c1e9b70d62fdb9d53d2)), closes [#19567](https://github.com/vitejs/vite/issues/19567)
+* perf: flush compile cache after 10s (#19537) ([6c8a5a2](https://github.com/vitejs/vite/commit/6c8a5a27e645a182f5b03a4ed6aa726eab85993f)), closes [#19537](https://github.com/vitejs/vite/issues/19537)
+* chore(css): move environment destructuring after condition check (#19492) ([c9eda23](https://github.com/vitejs/vite/commit/c9eda2348c244d591d23f131c6ddf262b256cbf0)), closes [#19492](https://github.com/vitejs/vite/issues/19492)
+* chore(html): remove unnecessary value check (#19491) ([797959f](https://github.com/vitejs/vite/commit/797959f01da583b85a0be1dc89f762fd01d138db)), closes [#19491](https://github.com/vitejs/vite/issues/19491)
+
+
+
+## 6.2.0 (2025-02-25)
+
+* fix(deps): update all non-major dependencies (#19501) ([c94c9e0](https://github.com/vitejs/vite/commit/c94c9e052127cf4796374de1d698ec60b2973dfa)), closes [#19501](https://github.com/vitejs/vite/issues/19501)
+* fix(worker): string interpolation in dynamic worker options (#19476) ([07091a1](https://github.com/vitejs/vite/commit/07091a1e804e5934208ef0b6324a04317dd0d815)), closes [#19476](https://github.com/vitejs/vite/issues/19476)
+* chore: use unicode cross icon instead of x (#19497) ([5c70296](https://github.com/vitejs/vite/commit/5c70296ffb22fe5a0f4039835aa14feb096b4a97)), closes [#19497](https://github.com/vitejs/vite/issues/19497)
+
+
+
+## 6.2.0-beta.1 (2025-02-21)
+
+* fix(css): temporary add `?.` after `this.getModuleInfo` in `vite:css-post` (#19478) ([12b0b8a](https://github.com/vitejs/vite/commit/12b0b8a953ad7d08ba0540cb4f5cb26a7fa69da2)), closes [#19478](https://github.com/vitejs/vite/issues/19478)
+
+
+
+## 6.2.0-beta.0 (2025-02-21)
+
+* feat: show `mode` on server start and add env debugger (#18808) ([c575b82](https://github.com/vitejs/vite/commit/c575b825596ccaedfac1cfecbb9a464e5e584a60)), closes [#18808](https://github.com/vitejs/vite/issues/18808)
+* feat: use host url to open browser (#19414) ([f6926ca](https://github.com/vitejs/vite/commit/f6926caa1f2c9433ca544172378412795722d8e1)), closes [#19414](https://github.com/vitejs/vite/issues/19414)
+* feat(css): allow scoping css to importers exports (#19418) ([3ebd838](https://github.com/vitejs/vite/commit/3ebd83833f723dde64098bc617c61b37adb3ad01)), closes [#19418](https://github.com/vitejs/vite/issues/19418)
+* chore: bump esbuild to 0.25.0 (#19389) ([73987f2](https://github.com/vitejs/vite/commit/73987f22ec3f2df0d36154f1766ca7a7dc4c2460)), closes [#19389](https://github.com/vitejs/vite/issues/19389)
+
+
+
+## <small>6.1.1 (2025-02-19)</small>
+
+* fix: ensure `.[cm]?[tj]sx?` static assets are JS mime (#19453) ([e7ba55e](https://github.com/vitejs/vite/commit/e7ba55e7d57ad97ab43682b152159e29fa4b3753)), closes [#19453](https://github.com/vitejs/vite/issues/19453)
+* fix: ignore `*.ipv4` address in cert (#19416) ([973283b](https://github.com/vitejs/vite/commit/973283bf84c3dca42e2e20a9f9b8761011878b8b)), closes [#19416](https://github.com/vitejs/vite/issues/19416)
+* fix(css): run rewrite plugin if postcss plugin exists (#19371) ([bcdb51a](https://github.com/vitejs/vite/commit/bcdb51a1ac082f4e8ed6f820787d6745dfaa972d)), closes [#19371](https://github.com/vitejs/vite/issues/19371)
+* fix(deps): bump tsconfck (#19375) ([746a583](https://github.com/vitejs/vite/commit/746a583d42592a31e1e8e80cc790a7c9e6acf58e)), closes [#19375](https://github.com/vitejs/vite/issues/19375)
+* fix(deps): update all non-major dependencies (#19392) ([60456a5](https://github.com/vitejs/vite/commit/60456a54fe90872dbd4bed332ecbd85bc88deb92)), closes [#19392](https://github.com/vitejs/vite/issues/19392)
+* fix(deps): update all non-major dependencies (#19440) ([ccac73d](https://github.com/vitejs/vite/commit/ccac73d9d0e92c7232f09207d1d6b893e823ed8e)), closes [#19440](https://github.com/vitejs/vite/issues/19440)
+* fix(html): ignore malformed src attrs (#19397) ([aff7812](https://github.com/vitejs/vite/commit/aff7812f0aed059c05ca36c86bf907d25964119a)), closes [#19397](https://github.com/vitejs/vite/issues/19397)
+* fix(worker): fix web worker type detection (#19462) ([edc65ea](https://github.com/vitejs/vite/commit/edc65eafa332b57ce44835deb7d7707e2d036c24)), closes [#19462](https://github.com/vitejs/vite/issues/19462)
+* refactor: remove custom .jxl mime (#19457) ([0c85464](https://github.com/vitejs/vite/commit/0c854645bd17960abbe8f01b602d1a1da1a2b9fd)), closes [#19457](https://github.com/vitejs/vite/issues/19457)
+* feat: add support for injecting debug IDs (#18763) ([0ff556a](https://github.com/vitejs/vite/commit/0ff556a6d9b55bff7cac17396ce7d4397becacaa)), closes [#18763](https://github.com/vitejs/vite/issues/18763)
+* chore: update 6.1.0 changelog (#19363) ([fa7c211](https://github.com/vitejs/vite/commit/fa7c211bf3e51269f8a8601e5994fb3ebb6859f9)), closes [#19363](https://github.com/vitejs/vite/issues/19363)
+
+
+
 ## 6.1.0 (2025-02-05)
 
 

@@ -36,8 +36,8 @@ export const assetUrlRE = /__VITE_ASSET__([\w$]+)__(?:\$_(.*?)__)?/g
 
 const jsSourceMapRE = /\.[cm]?js\.map$/
 
-const noInlineRE = /[?&]no-inline\b/
-const inlineRE = /[?&]inline\b/
+export const noInlineRE = /[?&]no-inline\b/
+export const inlineRE = /[?&]inline\b/
 const svgExtRE = /\.svg(?:$|\?)/
 
 const assetCache = new WeakMap<Environment, Map<string, string>>()
@@ -57,8 +57,6 @@ export function registerCustomMime(): void {
   mrmime.mimes['flac'] = 'audio/flac'
   // https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Common_types
   mrmime.mimes['eot'] = 'application/vnd.ms-fontobject'
-  // https://github.com/lukeed/mrmime/issues/10
-  mrmime.mimes['jxl'] = 'image/jxl'
 }
 
 export function renderAssetUrlInJS(

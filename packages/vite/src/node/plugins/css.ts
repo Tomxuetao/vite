@@ -54,7 +54,7 @@ import {
   SPECIAL_QUERY_RE,
 } from '../constants'
 import type { ResolvedConfig } from '../config'
-import type { Plugin } from '../plugin'
+import type { CustomPluginOptionsVite, Plugin } from '../plugin'
 import { checkPublicFile } from '../publicDir'
 import {
   arraify,
@@ -363,7 +363,6 @@ export function cssPlugin(config: ResolvedConfig): Plugin {
     },
 
     async transform(raw, id) {
-      const { environment } = this
       if (
         !isCSSRequest(id) ||
         commonjsProxyRE.test(id) ||
@@ -371,6 +370,8 @@ export function cssPlugin(config: ResolvedConfig): Plugin {
       ) {
         return
       }
+
+      const { environment } = this
       const resolveUrl = (url: string, importer?: string) =>
         idResolver(environment, url, importer)
 
@@ -439,12 +440,69 @@ export function cssPlugin(config: ResolvedConfig): Plugin {
   }
 }
 
+const createStyleContentMap = () => {
+  const contents = new Map<string, string>() // css id -> css content
+  const scopedIds = new Set<string>() // ids of css that are scoped
+  const relations = new Map<
+    /* the id of the target for which css is scoped to */ string,
+    Array<{
+      /** css id */ id: string
+      /** export name */ exp: string | undefined
+    }>
+  >()
+
+  return {
+    putContent(
+      id: string,
+      content: string,
+      scopeTo: CustomPluginOptionsVite['cssScopeTo'] | undefined,
+    ) {
+      contents.set(id, content)
+      if (scopeTo) {
+        const [scopedId, exp] = scopeTo
+        if (!relations.has(scopedId)) {
+          relations.set(scopedId, [])
+        }
+        relations.get(scopedId)!.push({ id, exp })
+        scopedIds.add(id)
+      }
+    },
+    hasContentOfNonScoped(id: string) {
+      return !scopedIds.has(id) && contents.has(id)
+    },
+    getContentOfNonScoped(id: string) {
+      if (scopedIds.has(id)) return
+      return contents.get(id)
+    },
+    hasContentsScopedTo(id: string) {
+      return (relations.get(id) ?? [])?.length > 0
+    },
+    getContentsScopedTo(id: string, importedIds: readonly string[]) {
+      const values = (relations.get(id) ?? []).map(
+        ({ id, exp }) =>
+          [
+            id,
+            {
+              content: contents.get(id) ?? '',
+              exp,
+            },
+          ] as const,
+      )
+      const styleIdToValue = new Map(values)
+      // get a sorted output by import order to make output deterministic
+      return importedIds
+        .filter((id) => styleIdToValue.has(id))
+        .map((id) => styleIdToValue.get(id)!)
+    },
+  }
+}
+
 /**
  * Plugin applied after user plugins
  */
 export function cssPostPlugin(config: ResolvedConfig): Plugin {
   // styles initialization in buildStart causes a styling loss in watch
-  const styles: Map<string, string> = new Map<string, string>()
+  const styles = createStyleContentMap()
   // queue to emit css serially to guarantee the files are emitted in a deterministic order
   let codeSplitEmitQueue = createSerialPromiseQueue<string>()
   const urlEmitQueue = createSerialPromiseQueue<unknown>()
@@ -588,9 +646,19 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
 
       // build CSS handling ----------------------------------------------------
 
+      const cssScopeTo =
+        // NOTE: `this.getModuleInfo` can be undefined when the plugin is called directly
+        //       adding `?.` temporary to avoid unocss from breaking
+        // TODO: remove `?.` after `this.getModuleInfo` in Vite 7
+        (
+          this.getModuleInfo?.(id)?.meta?.vite as
+            | CustomPluginOptionsVite
+            | undefined
+        )?.cssScopeTo
+
       // record css
       if (!inlined) {
-        styles.set(id, css)
+        styles.putContent(id, css, cssScopeTo)
       }
 
       let code: string
@@ -612,7 +680,8 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
         map: { mappings: '' },
         // avoid the css module from being tree-shaken so that we can retrieve
         // it in renderChunk()
-        moduleSideEffects: modulesCode || inlined ? false : 'no-treeshake',
+        moduleSideEffects:
+          modulesCode || inlined || cssScopeTo ? false : 'no-treeshake',
       }
     },
 
@@ -623,13 +692,26 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
       let isPureCssChunk = chunk.exports.length === 0
       const ids = Object.keys(chunk.modules)
       for (const id of ids) {
-        if (styles.has(id)) {
+        if (styles.hasContentOfNonScoped(id)) {
           // ?transform-only is used for ?url and shouldn't be included in normal CSS chunks
           if (!transformOnlyRE.test(id)) {
-            chunkCSS += styles.get(id)
+            chunkCSS += styles.getContentOfNonScoped(id)
             // a css module contains JS, so it makes this not a pure css chunk
             if (cssModuleRE.test(id)) {
               isPureCssChunk = false
+            }
+          }
+        } else if (styles.hasContentsScopedTo(id)) {
+          const renderedExports = chunk.modules[id]!.renderedExports
+          const importedIds = this.getModuleInfo(id)?.importedIds ?? []
+          // If this module has scoped styles, check for the rendered exports
+          // and include the corresponding CSS.
+          for (const { exp, content } of styles.getContentsScopedTo(
+            id,
+            importedIds,
+          )) {
+            if (exp === undefined || renderedExports.includes(exp)) {
+              chunkCSS += content
             }
           }
         } else if (!isJsChunkEmpty) {
@@ -726,13 +808,13 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
             path.basename(originalFileName),
             '.css',
           )
-          if (!styles.has(id)) {
+          if (!styles.hasContentOfNonScoped(id)) {
             throw new Error(
               `css content for ${JSON.stringify(id)} was not found`,
             )
           }
 
-          let cssContent = styles.get(id)!
+          let cssContent = styles.getContentOfNonScoped(id)!
 
           cssContent = resolveAssetUrlsInCss(cssContent, cssAssetName)
 
@@ -857,12 +939,19 @@ export function cssPostPlugin(config: ResolvedConfig): Plugin {
               `document.head.appendChild(${style});`
             let injectionPoint
             const wrapIdx = code.indexOf('System.register')
+            const singleQuoteUseStrict = `'use strict';`
+            const doubleQuoteUseStrict = `"use strict";`
             if (wrapIdx >= 0) {
               const executeFnStart = code.indexOf('execute:', wrapIdx)
               injectionPoint = code.indexOf('{', executeFnStart) + 1
+            } else if (code.includes(singleQuoteUseStrict)) {
+              injectionPoint =
+                code.indexOf(singleQuoteUseStrict) + singleQuoteUseStrict.length
+            } else if (code.includes(doubleQuoteUseStrict)) {
+              injectionPoint =
+                code.indexOf(doubleQuoteUseStrict) + doubleQuoteUseStrict.length
             } else {
-              const insertMark = "'use strict';"
-              injectionPoint = code.indexOf(insertMark) + insertMark.length
+              throw new Error('Injection point for inlined CSS not found')
             }
             s ||= new MagicString(code)
             s.appendRight(injectionPoint, injectCode)
@@ -1621,7 +1710,7 @@ export async function formatPostcssSourceMap(
     const cleanSource = cleanUrl(decodeURIComponent(source))
 
     // postcss virtual files
-    if (cleanSource[0] === '<' && cleanSource[cleanSource.length - 1] === '>') {
+    if (cleanSource[0] === '<' && cleanSource.endsWith('>')) {
       return `\0${cleanSource}`
     }
 
@@ -3216,7 +3305,7 @@ async function compileLightningCSS(
   const deps = new Set<string>()
   // replace null byte as lightningcss treats that as a string terminator
   // https://github.com/parcel-bundler/lightningcss/issues/874
-  const filename = id.replace('\0', NULL_BYTE_PLACEHOLDER)
+  const filename = removeDirectQuery(id).replace('\0', NULL_BYTE_PLACEHOLDER)
 
   let res: LightningCssTransformAttributeResult | LightningCssTransformResult
   try {

@@ -30,7 +30,7 @@ function err(e: string, pos: number) {
 function findClosingParen(input: string, fromIndex: number) {
   let count = 1
 
-  for (let i = fromIndex + 1; i < input.length; i++) {
+  for (let i = fromIndex; i < input.length; i++) {
     if (input[i] === '(') count++
     if (input[i] === ')') count--
     if (count === 0) return i
@@ -149,19 +149,25 @@ async function getWorkerType(
   }
 
   // need to find in comment code
-  const workerOptString = raw
-    .substring(commaIndex + 1, endIndex)
-    .replace(/\}[\s\S]*,/g, '}') // strip trailing comma for parsing
-
+  let workerOptString = raw.substring(commaIndex + 1, endIndex)
   const hasViteIgnore = hasViteIgnoreRE.test(workerOptString)
   if (hasViteIgnore) {
     return 'ignore'
   }
 
   // need to find in no comment code
-  const cleanWorkerOptString = clean.substring(commaIndex + 1, endIndex).trim()
-  if (!cleanWorkerOptString.length) {
+  const cleanWorkerOptString = clean.substring(commaIndex + 1, endIndex)
+  const trimmedCleanWorkerOptString = cleanWorkerOptString.trim()
+  if (!trimmedCleanWorkerOptString.length) {
     return 'classic'
+  }
+
+  // strip trailing comma for evalValue
+  if (trimmedCleanWorkerOptString.endsWith(',')) {
+    workerOptString = workerOptString.slice(
+      0,
+      cleanWorkerOptString.lastIndexOf(','),
+    )
   }
 
   const workerOpts = await parseWorkerOptions(workerOptString, commaIndex + 1)
@@ -202,6 +208,10 @@ export function workerImportMetaUrlPlugin(config: ResolvedConfig): Plugin {
   return {
     name: 'vite:worker-import-meta-url',
 
+    applyToEnvironment(environment) {
+      return environment.config.consumer === 'client'
+    },
+
     shouldTransformCachedModule({ code }) {
       if (isBuild && config.build.watch && isIncludeWorkerImportMetaUrl(code)) {
         return true
@@ -209,10 +219,7 @@ export function workerImportMetaUrlPlugin(config: ResolvedConfig): Plugin {
     },
 
     async transform(code, id) {
-      if (
-        this.environment.config.consumer === 'client' &&
-        isIncludeWorkerImportMetaUrl(code)
-      ) {
+      if (isIncludeWorkerImportMetaUrl(code)) {
         let s: MagicString | undefined
         const cleanString = stripLiteral(code)
         const workerImportMetaUrlRE =
