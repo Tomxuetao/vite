@@ -2,14 +2,18 @@ import path from 'node:path'
 import fsp from 'node:fs/promises'
 import { Buffer } from 'node:buffer'
 import * as mrmime from 'mrmime'
-import type { NormalizedOutputOptions, RenderedChunk } from 'rollup'
+import type {
+  NormalizedOutputOptions,
+  PluginContext,
+  RenderedChunk,
+} from 'rollup'
 import MagicString from 'magic-string'
 import colors from 'picocolors'
 import {
   createToImportMetaURLBasedRelativeRuntime,
   toOutputFilePathInJS,
 } from '../build'
-import type { Plugin, PluginContext } from '../plugin'
+import type { Plugin } from '../plugin'
 import type { ResolvedConfig } from '../config'
 import { checkPublicFile } from '../publicDir'
 import {
@@ -38,7 +42,6 @@ const jsSourceMapRE = /\.[cm]?js\.map$/
 
 export const noInlineRE = /[?&]no-inline\b/
 export const inlineRE = /[?&]inline\b/
-const svgExtRE = /\.svg(?:$|\?)/
 
 const assetCache = new WeakMap<Environment, Map<string, string>>()
 
@@ -163,13 +166,14 @@ export function assetPlugin(config: ResolvedConfig): Plugin {
     },
 
     load: {
-      async handler(id) {
-        if (id[0] === '\0') {
+      filter: {
+        id: {
           // Rollup convention, this id should be handled by the
           // plugin that marked it with \0
-          return
-        }
-
+          exclude: /^\0/,
+        },
+      },
+      async handler(id) {
         // raw requests, read from disk
         if (rawRE.test(id)) {
           const file = checkPublicFile(id, config) || cleanUrl(id)
@@ -304,7 +308,7 @@ export async function fileToDevUrl(
   // If is svg and it's inlined in build, also inline it in dev to match
   // the behaviour in build due to quote handling differences.
   const cleanedId = cleanUrl(id)
-  if (svgExtRE.test(cleanedId)) {
+  if (cleanedId.endsWith('.svg')) {
     const file = publicFile || cleanedId
     const content = await fsp.readFile(file)
     if (shouldInline(environment, file, id, content, undefined, undefined)) {
@@ -403,7 +407,7 @@ async function fileToBuiltUrl(
     return cached
   }
 
-  const { file, postfix } = splitFileAndPostfix(id)
+  let { file, postfix } = splitFileAndPostfix(id)
   const content = await fsp.readFile(file)
 
   let url: string
@@ -423,6 +427,11 @@ async function fileToBuiltUrl(
       originalFileName,
       source: content,
     })
+
+    if (environment.config.command === 'build' && noInlineRE.test(postfix)) {
+      postfix = postfix.replace(noInlineRE, '').replace(/^&/, '?')
+    }
+
     url = `__VITE_ASSET__${referenceId}__${postfix ? `$_${postfix}__` : ``}`
   }
 

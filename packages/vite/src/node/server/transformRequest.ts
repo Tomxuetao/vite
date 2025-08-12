@@ -12,6 +12,7 @@ import {
   ensureWatchedFile,
   injectQuery,
   isObject,
+  monotonicDateNow,
   prettifyUrl,
   removeImportQuery,
   removeTimestampQuery,
@@ -20,7 +21,7 @@ import {
 } from '../utils'
 import { ssrTransform } from '../ssr/ssrTransform'
 import { checkPublicFile } from '../publicDir'
-import { cleanUrl, unwrapId } from '../../shared/utils'
+import { cleanUrl, slash, unwrapId } from '../../shared/utils'
 import {
   applySourcemapIgnoreList,
   extractSourcemapFromFile,
@@ -52,10 +53,9 @@ export interface TransformOptions {
    * @deprecated inferred from environment
    */
   ssr?: boolean
-  /**
-   * @internal
-   */
-  html?: boolean
+}
+
+export interface TransformOptionsInternal {
   /**
    * @internal
    */
@@ -72,18 +72,10 @@ export interface TransformOptions {
 export function transformRequest(
   environment: DevEnvironment,
   url: string,
-  options: TransformOptions = {},
+  options: TransformOptionsInternal = {},
 ): Promise<TransformResult | null> {
-  // Backward compatibility when only `ssr` is passed
-  if (!options.ssr) {
-    // Backward compatibility
-    options = { ...options, ssr: environment.config.consumer === 'server' }
-  }
-
   if (environment._closing && environment.config.dev.recoverable)
     throwClosedServerError()
-
-  const cacheKey = `${options.html ? 'html:' : ''}${url}`
 
   // This module may get invalidated while we are processing it. For example
   // when a full page reload is needed after the re-processing of pre-bundled
@@ -105,9 +97,9 @@ export function transformRequest(
   //
   // We save the timestamp when we start processing and compare it with the
   // last time this module is invalidated
-  const timestamp = Date.now()
+  const timestamp = monotonicDateNow()
 
-  const pending = environment._pendingRequests.get(cacheKey)
+  const pending = environment._pendingRequests.get(url)
   if (pending) {
     return environment.moduleGraph
       .getModuleByUrl(removeTimestampQuery(url))
@@ -134,13 +126,13 @@ export function transformRequest(
   let cleared = false
   const clearCache = () => {
     if (!cleared) {
-      environment._pendingRequests.delete(cacheKey)
+      environment._pendingRequests.delete(url)
       cleared = true
     }
   }
 
   // Cache the request and clear it once processing is done
-  environment._pendingRequests.set(cacheKey, {
+  environment._pendingRequests.set(url, {
     request,
     timestamp,
     abort: clearCache,
@@ -152,7 +144,7 @@ export function transformRequest(
 async function doTransform(
   environment: DevEnvironment,
   url: string,
-  options: TransformOptions,
+  options: TransformOptionsInternal,
   timestamp: number,
 ) {
   url = removeTimestampQuery(url)
@@ -242,7 +234,7 @@ async function loadAndTransform(
   environment: DevEnvironment,
   id: string,
   url: string,
-  options: TransformOptions,
+  options: TransformOptionsInternal,
   timestamp: number,
   mod?: EnvironmentModuleNode,
   resolved?: PartialResolvedId,
@@ -256,6 +248,7 @@ async function loadAndTransform(
   if (options.allowId && !options.allowId(id)) {
     const err: any = new Error(`Denied ID ${id}`)
     err.code = ERR_DENIED_ID
+    err.id = id
     throw err
   }
 
@@ -269,11 +262,6 @@ async function loadAndTransform(
   if (loadResult == null) {
     const file = cleanUrl(id)
 
-    // if this is an html request and there is no load result, skip ahead to
-    // SPA fallback.
-    if (options.html && !id.endsWith('.html')) {
-      return null
-    }
     // try fallback loading it from fs as string
     // if the file is a binary, there should be a plugin that already loaded it
     // as string
@@ -281,16 +269,13 @@ async function loadAndTransform(
     // like /service-worker.js or /api/users
     if (
       environment.config.consumer === 'server' ||
-      isFileLoadingAllowed(environment.getTopLevelConfig(), file)
+      isFileLoadingAllowed(environment.getTopLevelConfig(), slash(file))
     ) {
       try {
         code = await fsp.readFile(file, 'utf-8')
         debugLoad?.(`${timeFrom(loadStart)} [fs] ${prettyUrl}`)
       } catch (e) {
-        if (e.code !== 'ENOENT') {
-          if (e.code === 'EISDIR') {
-            e.message = `${e.message} ${file}`
-          }
+        if (e.code !== 'ENOENT' && e.code !== 'EISDIR') {
           throw e
         }
       }

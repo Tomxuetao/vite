@@ -36,6 +36,7 @@ import {
   getHash,
   injectQuery,
   isBuiltin,
+  isCSSRequest,
   isDataUrl,
   isDefined,
   isExternalUrl,
@@ -67,7 +68,7 @@ import {
 } from '../../shared/utils'
 import type { TransformPluginContext } from '../server/pluginContainer'
 import { throwOutdatedRequest } from './optimizedDeps'
-import { isCSSRequest, isDirectCSSRequest } from './css'
+import { isDirectCSSRequest } from './css'
 import { browserExternalId } from './resolve'
 import { serializeDefine } from './define'
 import { WORKER_FILE_ID } from './worker'
@@ -100,7 +101,7 @@ export function isExplicitImportRequired(url: string): boolean {
   return !isJSRequest(url) && !isCSSRequest(url)
 }
 
-export function normalizeResolvedIdToUrl(
+function normalizeResolvedIdToUrl(
   environment: DevEnvironment,
   url: string,
   resolved: PartialResolvedId,
@@ -806,7 +807,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
             await Promise.all(
               [...pluginImports].map((id) => normalizeUrl(id, 0, true)),
             )
-          ).forEach(([url]) => importedUrls.add(url))
+          ).forEach(([url]) => importedUrls.add(stripBase(url, base)))
         }
         // HMR transforms are no-ops in SSR, so an `accept` call will
         // never be injected. Avoid updating the `isSelfAccepting`
@@ -896,8 +897,18 @@ export function createParseErrorInfo(
     showCodeFrame: !probablyBinary,
   }
 }
-// prettier-ignore
-const interopHelper = (m: any) => m?.__esModule ? m : { ...(typeof m === 'object' && !Array.isArray(m) || typeof m === 'function' ? m : {}), default: m }
+
+const interopHelper = (m: any) =>
+  m?.__esModule
+    ? m
+    : {
+        ...((typeof m === 'object' && !Array.isArray(m)) ||
+        typeof m === 'function'
+          ? m
+          : {}),
+        default: m,
+      }
+const interopHelperStr = interopHelper.toString().replaceAll('\n', '')
 
 export function interopNamedImports(
   str: MagicString,
@@ -921,7 +932,7 @@ export function interopNamedImports(
     str.overwrite(
       expStart,
       expEnd,
-      `import('${rewrittenUrl}').then(m => (${interopHelper.toString()})(m.default))` +
+      `import('${rewrittenUrl}').then(m => (${interopHelperStr})(m.default))` +
         getLineBreaks(exp),
       { contentOnly: true },
     )
@@ -1057,7 +1068,7 @@ export function transformCjsImport(
     importNames.forEach(({ importedName, localName }) => {
       if (importedName === '*') {
         lines.push(
-          `const ${localName} = (${interopHelper.toString()})(${cjsModuleName})`,
+          `const ${localName} = (${interopHelperStr})(${cjsModuleName})`,
         )
       } else if (importedName === 'default') {
         lines.push(
