@@ -8,7 +8,7 @@ We plan to stabilize these new APIs (with potential breaking changes) in a futur
 Resources:
 
 - [Feedback discussion](https://github.com/vitejs/vite/discussions/16358) where we are gathering feedback about the new APIs.
-- [Environment API PR](https://github.com/vitejs/vite/pull/16471) where the new API were implemented and reviewed.
+- [Environment API PR](https://github.com/vitejs/vite/pull/16471) where the new APIs were implemented and reviewed.
 
 Please share your feedback with us.
 :::
@@ -80,7 +80,7 @@ A Vite dev server exposes two environments by default: a `client` environment an
 
 The transformed source code is called a module, and the relationships between the modules processed in each environment are kept in a module graph. The transformed code for these modules is sent to the runtimes associated with each environment to be executed. When a module is evaluated in the runtime, its imported modules will be requested triggering the processing of a section of the module graph.
 
-A Vite Module Runner allows running any code by processing it with Vite plugins first. It is different from `server.ssrLoadModule` because the runner implementation is decoupled from the server. This allows library and framework authors to implement their layer of communication between the Vite server and the runner. The browser communicates with its corresponding environment using the server Web Socket and through HTTP requests. The Node Module runner can directly do function calls to process modules as it is running in the same process. Other environments could run modules connecting to a JS runtime like workerd, or a Worker Thread as Vitest does.
+A Vite Module Runner allows running any code by processing it with Vite plugins first. It is different from `server.ssrLoadModule` because the runner implementation is decoupled from the server. This allows library and framework authors to implement their layer of communication between the Vite server and the runner. The browser communicates with its corresponding environment using the server WebSocket and through HTTP requests. The Node Module runner can directly do function calls to process modules as it is running in the same process. Other environments could run modules connecting to a JS runtime like workerd, or a Worker Thread as Vitest does.
 
 One of the goals of this feature is to provide a customizable API to process and run code. Users can create new environment factories using the exposed primitives.
 
@@ -316,19 +316,28 @@ import { createServer, RemoteEnvironmentTransport, DevEnvironment } from 'vite'
 function createWorkerEnvironment(name, config, context) {
   const worker = new Worker('./worker.js')
   const handlerToWorkerListener = new WeakMap()
+  const client = {
+    send(payload: HotPayload) {
+      worker.postMessage(payload)
+    },
+  }
 
   const workerHotChannel = {
     send: (data) => worker.postMessage(data),
     on: (event, handler) => {
-      if (event === 'connection') return
+      // client is already connected
+      if (event === 'vite:client:connect') return
+      if (event === 'vite:client:disconnect') {
+        const listener = () => {
+          handler(undefined, client)
+        }
+        handlerToWorkerListener.set(handler, listener)
+        worker.on('exit', listener)
+        return
+      }
 
       const listener = (value) => {
         if (value.type === 'custom' && value.event === event) {
-          const client = {
-            send(payload) {
-              worker.postMessage(payload)
-            },
-          }
           handler(value.data, client)
         }
       }
@@ -336,7 +345,16 @@ function createWorkerEnvironment(name, config, context) {
       worker.on('message', listener)
     },
     off: (event, handler) => {
-      if (event === 'connection') return
+      if (event === 'vite:client:connect') return
+      if (event === 'vite:client:disconnect') {
+        const listener = handlerToWorkerListener.get(handler)
+        if (listener) {
+          worker.off('exit', listener)
+          handlerToWorkerListener.delete(handler)
+        }
+        return
+      }
+
       const listener = handlerToWorkerListener.get(handler)
       if (listener) {
         worker.off('message', listener)
@@ -362,6 +380,8 @@ await createServer({
 ```
 
 :::
+
+Make sure to implement the `vite:client:connect` / `vite:client:disconnect` events in the `on` / `off` methods when those methods exist. `vite:client:connect` event should be emitted when the connection is established, and `vite:client:disconnect` event should be emitted when the connection is closed. The `HotChannelClient` object passed to the event handler must have the same reference for the same connection.
 
 A different example using an HTTP request to communicate between the runner and the server:
 

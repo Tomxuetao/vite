@@ -137,7 +137,7 @@ describe.runIf(isBuild)('build', () => {
   test('should generate legacy sourcemap file', async () => {
     expect(
       listAssets().some((filename) =>
-        /index-legacy-[-\w]{8}\.js\.map$/.test(filename),
+        /chunk-main-legacy\.[-\w]{8}\.js\.map$/.test(filename),
       ),
     ).toBeTruthy()
     expect(

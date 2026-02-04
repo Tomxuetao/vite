@@ -6,9 +6,11 @@ import type {
   NormalizedOutputOptions,
   PluginContext,
   RenderedChunk,
-} from 'rollup'
+} from 'rolldown'
 import MagicString from 'magic-string'
 import colors from 'picocolors'
+import picomatch from 'picomatch'
+import { makeIdFiltersToMatchWithQuery } from '@rolldown/pluginutils'
 import {
   createToImportMetaURLBasedRelativeRuntime,
   toOutputFilePathInJS,
@@ -27,26 +29,34 @@ import {
   removeUrlQuery,
   urlRE,
 } from '../utils'
-import { DEFAULT_ASSETS_INLINE_LIMIT, FS_PREFIX } from '../constants'
+import {
+  DEFAULT_ASSETS_INLINE_LIMIT,
+  DEFAULT_ASSETS_RE,
+  FS_PREFIX,
+} from '../constants'
 import {
   cleanUrl,
   splitFileAndPostfix,
   withTrailingSlash,
 } from '../../shared/utils'
 import type { Environment } from '../environment'
+import type { PartialEnvironment } from '../baseEnvironment'
 
 // referenceId is base64url but replaces - with $
-export const assetUrlRE = /__VITE_ASSET__([\w$]+)__(?:\$_(.*?)__)?/g
+export const assetUrlRE: RegExp = /__VITE_ASSET__([\w$]+)__(?:\$_(.*?)__)?/g
 
 const jsSourceMapRE = /\.[cm]?js\.map$/
 
-export const noInlineRE = /[?&]no-inline\b/
-export const inlineRE = /[?&]inline\b/
+export const noInlineRE: RegExp = /[?&]no-inline\b/
+export const inlineRE: RegExp = /[?&]inline\b/
 
 const assetCache = new WeakMap<Environment, Map<string, string>>()
 
 /** a set of referenceId for entry CSS assets for each environment */
-export const cssEntriesMap = new WeakMap<Environment, Set<string>>()
+export const cssEntriesMap: WeakMap<
+  Environment,
+  Map<string, string>
+> = new WeakMap()
 
 // add own dictionary entry by directly assigning mrmime
 export function registerCustomMime(): void {
@@ -148,10 +158,19 @@ export function assetPlugin(config: ResolvedConfig): Plugin {
 
     buildStart() {
       assetCache.set(this.environment, new Map())
-      cssEntriesMap.set(this.environment, new Set())
+      cssEntriesMap.set(this.environment, new Map())
     },
 
     resolveId: {
+      filter: {
+        id: [
+          urlRE,
+          DEFAULT_ASSETS_RE,
+          ...makeIdFiltersToMatchWithQuery(config.rawAssetsInclude).map((v) =>
+            typeof v === 'string' ? picomatch.makeRe(v, { dot: true }) : v,
+          ),
+        ],
+      },
       handler(id) {
         if (!config.assetsInclude(cleanUrl(id)) && !urlRE.test(id)) {
           return
@@ -168,6 +187,12 @@ export function assetPlugin(config: ResolvedConfig): Plugin {
     load: {
       filter: {
         id: {
+          include: [
+            rawRE,
+            urlRE,
+            DEFAULT_ASSETS_RE,
+            ...makeIdFiltersToMatchWithQuery(config.rawAssetsInclude),
+          ],
           // Rollup convention, this id should be handled by the
           // plugin that marked it with \0
           exclude: /^\0/,
@@ -179,9 +204,12 @@ export function assetPlugin(config: ResolvedConfig): Plugin {
           const file = checkPublicFile(id, config) || cleanUrl(id)
           this.addWatchFile(file)
           // raw query, read file and return as string
-          return `export default ${JSON.stringify(
-            await fsp.readFile(file, 'utf-8'),
-          )}`
+          return {
+            code: `export default ${JSON.stringify(
+              await fsp.readFile(file, 'utf-8'),
+            )}`,
+            moduleType: 'js', // NOTE: needs to be set to avoid double `export default` in `?raw&.txt`s
+          }
         }
 
         if (!urlRE.test(id) && !config.assetsInclude(cleanUrl(id))) {
@@ -208,24 +236,29 @@ export function assetPlugin(config: ResolvedConfig): Plugin {
               ? 'no-treeshake'
               : false,
           meta: config.command === 'build' ? { 'vite:asset': true } : undefined,
+          moduleType: 'js', // NOTE: needs to be set to avoid double `export default` in `.txt`s
         }
       },
     },
 
-    renderChunk(code, chunk, opts) {
-      const s = renderAssetUrlInJS(this, chunk, opts, code)
+    ...(config.command === 'build'
+      ? {
+          renderChunk(code, chunk, opts) {
+            const s = renderAssetUrlInJS(this, chunk, opts, code)
 
-      if (s) {
-        return {
-          code: s.toString(),
-          map: this.environment.config.build.sourcemap
-            ? s.generateMap({ hires: 'boundary' })
-            : null,
+            if (s) {
+              return {
+                code: s.toString(),
+                map: this.environment.config.build.sourcemap
+                  ? s.generateMap({ hires: 'boundary' })
+                  : null,
+              }
+            } else {
+              return null
+            }
+          },
         }
-      } else {
-        return null
-      }
-    },
+      : {}),
 
     generateBundle(_, bundle) {
       // Remove empty entry point file
@@ -275,6 +308,10 @@ export function assetPlugin(config: ResolvedConfig): Plugin {
         }
       }
     },
+
+    watchChange(id) {
+      assetCache.get(this.environment)?.delete(normalizePath(id))
+    },
   }
 }
 
@@ -283,7 +320,7 @@ export async function fileToUrl(
   id: string,
 ): Promise<string> {
   const { environment } = pluginContext
-  if (environment.config.command === 'serve') {
+  if (!environment.config.isBundled) {
     return fileToDevUrl(environment, id)
   } else {
     return fileToBuiltUrl(pluginContext, id)
@@ -342,13 +379,13 @@ export function getPublicAssetFilename(
   return publicAssetUrlCache.get(config)?.get(hash)
 }
 
-export const publicAssetUrlCache = new WeakMap<
+// inner map: hash -> url
+export const publicAssetUrlCache: WeakMap<
   ResolvedConfig,
-  // hash -> url
   Map<string, string>
->()
+> = new WeakMap()
 
-export const publicAssetUrlRE = /__VITE_PUBLIC_ASSET__([a-z\d]{8})__/g
+export const publicAssetUrlRE: RegExp = /__VITE_PUBLIC_ASSET__([a-z\d]{8})__/g
 
 export function publicFileToBuiltUrl(
   url: string,
@@ -432,11 +469,40 @@ async function fileToBuiltUrl(
       postfix = postfix.replace(noInlineRE, '').replace(/^&/, '?')
     }
 
-    url = `__VITE_ASSET__${referenceId}__${postfix ? `$_${postfix}__` : ``}`
+    if (
+      environment.config.command === 'serve' &&
+      environment.config.experimental.bundledDev
+    ) {
+      const outputFilename = pluginContext.getFileName(referenceId)
+      url = toOutputFilePathInJSForBundledDev(environment, outputFilename)
+    } else {
+      url = `__VITE_ASSET__${referenceId}__${postfix ? `$_${postfix}__` : ``}`
+    }
   }
 
   cache.set(id, url)
   return url
+}
+
+export function toOutputFilePathInJSForBundledDev(
+  environment: PartialEnvironment,
+  filename: string,
+): string {
+  const outputUrl = toOutputFilePathInJS(
+    environment,
+    filename,
+    'asset',
+    // in bundled dev, the chunks are always emitted to `assets` directory
+    'assets/dummy.js',
+    'js',
+    // relative base is not supported in bundled dev
+    () => {
+      throw new Error('unreachable')
+    },
+  )
+  // renderBuiltUrl is not supported in bundled dev
+  if (typeof outputUrl === 'object') throw new Error('unreachable')
+  return outputUrl
 }
 
 export async function urlToBuiltUrl(
@@ -449,10 +515,11 @@ export async function urlToBuiltUrl(
   if (checkPublicFile(url, topLevelConfig)) {
     return publicFileToBuiltUrl(url, topLevelConfig)
   }
-  const file =
+  const file = normalizePath(
     url[0] === '/'
       ? path.join(topLevelConfig.root, url)
-      : path.join(path.dirname(importer), url)
+      : path.join(path.dirname(importer), url),
+  )
   return fileToBuiltUrl(
     pluginContext,
     file,

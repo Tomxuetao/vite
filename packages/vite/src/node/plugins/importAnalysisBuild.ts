@@ -5,12 +5,13 @@ import type {
   ImportSpecifier,
 } from 'es-module-lexer'
 import { init, parse as parseImports } from 'es-module-lexer'
-import type { SourceMap } from 'rollup'
+import type { SourceMap } from 'rolldown'
+import { viteBuildImportAnalysisPlugin as nativeBuildImportAnalysisPlugin } from 'rolldown/experimental'
 import type { RawSourceMap } from '@jridgewell/remapping'
 import convertSourceMap from 'convert-source-map'
 import { exactRegex } from '@rolldown/pluginutils'
 import { combineSourcemaps, generateCodeFrame, numberToPos } from '../utils'
-import type { Plugin } from '../plugin'
+import { type Plugin, perEnvironmentPlugin } from '../plugin'
 import type { ResolvedConfig } from '../config'
 import { toOutputFilePathInJS } from '../build'
 import { genSourceMapUrl } from '../server/sourcemap'
@@ -48,13 +49,9 @@ function toRelativePath(filename: string, importer: string) {
   return relPath[0] === '.' ? relPath : `./${relPath}`
 }
 
-function indexOfMatchInSlice(
-  str: string,
-  reg: RegExp,
-  pos: number = 0,
-): number {
-  reg.lastIndex = pos
-  const result = reg.exec(str)
+function findPreloadMarker(str: string, pos: number = 0): number {
+  preloadMarkerRE.lastIndex = pos
+  const result = preloadMarkerRE.exec(str)
   return result?.index ?? -1
 }
 
@@ -211,7 +208,7 @@ function getPreloadCode(
 /**
  * Build only. During serve this is performed as part of ./importAnalysis.
  */
-export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
+export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin[] {
   const getInsertPreload = (environment: PartialEnvironment) =>
     environment.config.consumer === 'client' &&
     !config.isWorker &&
@@ -220,7 +217,7 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
   const renderBuiltUrl = config.experimental.renderBuiltUrl
   const isRelativeBase = config.base === './' || config.base === ''
 
-  return {
+  const plugin: Plugin = {
     name: 'vite:build-import-analysis',
     resolveId: {
       filter: { id: exactRegex(preloadHelperId) },
@@ -458,7 +455,10 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
                 let url = name
                 if (!url) {
                   const rawUrl = code.slice(start, end)
-                  if (rawUrl[0] === `"` && rawUrl.endsWith(`"`))
+                  if (
+                    (rawUrl[0] === `"` && rawUrl[rawUrl.length - 1] === `"`) ||
+                    (rawUrl[0] === '`' && rawUrl[rawUrl.length - 1] === '`')
+                  )
                     url = rawUrl.slice(1, -1)
                 }
                 if (!url) continue
@@ -535,7 +535,10 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
               let url = name
               if (!url) {
                 const rawUrl = code.slice(start, end)
-                if (rawUrl[0] === `"` && rawUrl.endsWith(`"`))
+                if (
+                  (rawUrl[0] === `"` && rawUrl[rawUrl.length - 1] === `"`) ||
+                  (rawUrl[0] === '`' && rawUrl[rawUrl.length - 1] === '`')
+                )
                   url = rawUrl.slice(1, -1)
               }
               const deps = new Set<string>()
@@ -586,14 +589,10 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
                 addDeps(normalizedFile)
               }
 
-              let markerStartPos = indexOfMatchInSlice(
-                code,
-                preloadMarkerRE,
-                end,
-              )
+              let markerStartPos = findPreloadMarker(code, end)
               // fix issue #3051
               if (markerStartPos === -1 && imports.length === 1) {
-                markerStartPos = indexOfMatchInSlice(code, preloadMarkerRE)
+                markerStartPos = findPreloadMarker(code)
               }
 
               if (markerStartPos > 0) {
@@ -688,7 +687,7 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
 
           // there may still be markers due to inlined dynamic imports, remove
           // all the markers regardless
-          let markerStartPos = indexOfMatchInSlice(code, preloadMarkerRE)
+          let markerStartPos = findPreloadMarker(code)
           while (markerStartPos >= 0) {
             if (!rewroteMarkerStartPos.has(markerStartPos)) {
               s.update(
@@ -697,9 +696,8 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
                 'void 0',
               )
             }
-            markerStartPos = indexOfMatchInSlice(
+            markerStartPos = findPreloadMarker(
               code,
-              preloadMarkerRE,
               markerStartPos + preloadMarker.length,
             )
           }
@@ -711,11 +709,15 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
                 source: chunk.fileName,
                 hires: 'boundary',
               })
+              const originalFile = chunk.map.file
               const map = combineSourcemaps(chunk.fileName, [
                 nextMap as RawSourceMap,
                 chunk.map as RawSourceMap,
               ]) as SourceMap
               map.toUrl = () => genSourceMapUrl(map)
+              if (originalFile) {
+                map.file = originalFile
+              }
 
               const originalDebugId = chunk.map.debugId
               chunk.map = map
@@ -741,4 +743,29 @@ export function buildImportAnalysisPlugin(config: ResolvedConfig): Plugin {
       }
     },
   }
+
+  if (config.nativePluginEnabledLevel >= 1) {
+    delete plugin.transform
+    delete plugin.resolveId
+    delete plugin.load
+    return [
+      plugin,
+      perEnvironmentPlugin('native:import-analysis-build', (environment) => {
+        const preloadCode = getPreloadCode(
+          environment,
+          !!renderBuiltUrl,
+          isRelativeBase,
+        )
+        return nativeBuildImportAnalysisPlugin({
+          preloadCode,
+          insertPreload: getInsertPreload(environment),
+          // this field looks redundant, put a dummy value for now
+          optimizeModulePreloadRelativePaths: false,
+          renderBuiltUrl: !!renderBuiltUrl,
+          isRelativeBase,
+        })
+      }),
+    ]
+  }
+  return [plugin]
 }
